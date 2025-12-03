@@ -18,7 +18,34 @@ The Last9 Go Agent provides:
 - **Auto-configuration** from environment variables
 - **Pre-built integrations** for databases, Redis, and HTTP clients
 
-## 🚀 Quick Start
+## 🎭 Two Ways to Instrument Go with Last9
+
+Last9 offers **two approaches** for Go instrumentation - choose based on your environment:
+
+| Approach | Environment | Code Changes | Best For |
+|----------|-------------|--------------|----------|
+| **SDK** (this repo) | Anywhere | Minimal (2 lines) | VMs, Lambda, local dev, fine control |
+| **eBPF** ([operator](https://github.com/last9/last9-k8s-observability-installer)) | Kubernetes only | None | K8s production, zero-code, scale |
+
+### When to Use SDK (This Approach)
+- ✅ Running on VMs, bare metal, or Lambda
+- ✅ Local development (no Kubernetes)
+- ✅ Need custom business logic spans
+- ✅ Want fine-grained control
+- ✅ Privileged access not allowed
+
+### When to Use eBPF (Operator)
+- ✅ Running in Kubernetes
+- ✅ Want truly zero code changes
+- ✅ Standardizing across many services
+- ✅ Don't need custom spans
+- ✅ Security team approves eBPF
+
+**Can use both?** Yes! Use eBPF for base instrumentation (HTTP, DB) + SDK for custom spans.
+
+---
+
+## 🚀 SDK Quick Start (This Repo)
 
 ### 1. Install
 
@@ -95,6 +122,63 @@ func main() {
 
     r.GET("/ping", handler)
     r.Run(":8080")
+}
+```
+
+### Chi
+
+```go
+import chiagent "github.com/last9/go-agent/instrumentation/chi"
+
+func main() {
+    agent.Start()
+    defer agent.Shutdown()
+
+    // Option 1: New instrumented router
+    r := chiagent.New()
+
+    // Option 2: Add to existing router (AFTER defining routes)
+    r := chi.NewRouter()
+    r.Get("/users/{id}", handler)
+    chiagent.Use(r)  // Add AFTER routes for proper pattern capture
+
+    http.ListenAndServe(":8080", r)
+}
+```
+
+### Echo
+
+```go
+import echoagent "github.com/last9/go-agent/instrumentation/echo"
+
+func main() {
+    agent.Start()
+    defer agent.Shutdown()
+
+    // New instrumented Echo instance
+    e := echoagent.New()
+
+    e.GET("/ping", func(c echo.Context) error {
+        return c.String(200, "pong")
+    })
+    e.Start(":8080")
+}
+```
+
+### Gorilla Mux
+
+```go
+import gorillaagent "github.com/last9/go-agent/instrumentation/gorilla"
+
+func main() {
+    agent.Start()
+    defer agent.Shutdown()
+
+    // New instrumented router
+    r := gorillaagent.NewRouter()
+
+    r.HandleFunc("/ping", handler).Methods("GET")
+    http.ListenAndServe(":8080", r)
 }
 ```
 
@@ -236,8 +320,19 @@ The agent reads configuration from environment variables following OpenTelemetry
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Yes | - | Last9 OTLP endpoint |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Yes | - | Authorization header |
 | `OTEL_SERVICE_NAME` | No | `unknown-service` | Service name |
+| `OTEL_SERVICE_VERSION` | No | - | Service version (e.g., git commit SHA) |
 | `OTEL_RESOURCE_ATTRIBUTES` | No | - | Additional attributes (key=value pairs) |
 | `OTEL_TRACES_SAMPLER` | No | `always_on` | Sampling strategy |
+
+### Resource Attributes
+
+The agent automatically captures:
+- **Service info**: `service.name`, `service.version`
+- **Environment**: `deployment.environment` (defaults to "production")
+- **Host info**: hostname, OS, architecture
+- **Container**: container ID (if running in container)
+- **Process**: process ID, command line
+- **Custom attributes**: Any additional key-value pairs from `OTEL_RESOURCE_ATTRIBUTES`
 
 ### Example Configuration:
 
@@ -248,23 +343,51 @@ export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic YOUR_TOKEN_HERE"
 
 # Service Configuration
 export OTEL_SERVICE_NAME="user-service"
-export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,team=backend,version=1.0.0"
+export OTEL_SERVICE_VERSION="v1.2.3"  # or use git SHA: $(git rev-parse --short HEAD)
+
+# Resource Attributes
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,team=backend,region=us-east-1,component=api"
 
 # Sampling
 export OTEL_TRACES_SAMPLER="always_on"  # or "traceidratio" with OTEL_TRACES_SAMPLER_ARG
 ```
 
-## 🎯 Comparison
+## 🎯 SDK vs eBPF: Full Comparison
 
-| Feature | Old Approach | Last9 Agent |
-|---------|--------------|-------------|
-| Initialization | 150+ lines | 2 lines |
-| Framework setup | Manual middleware | Drop-in replacement |
-| Database | Manual wrapping | One function call |
-| Redis | Manual hooks | One function call |
-| HTTP client | Manual transport | One function call |
-| Configuration | Hardcoded | Environment variables |
-| Code changes per service | High | Minimal |
+### Feature Comparison
+
+| Feature | Last9 SDK (This Repo) | Last9 eBPF (Operator) | Raw OpenTelemetry |
+|---------|----------------------|----------------------|-------------------|
+| **Setup** | 2 lines | 0 lines (annotation) | 150+ lines |
+| **Environment** | Anywhere | Kubernetes only | Anywhere |
+| **Privileges** | None | eBPF/root | None |
+| **Custom spans** | ✅ Yes | ❌ No | ✅ Yes |
+| **3rd-party libs** | Via wrappers | ✅ Automatic | Via wrappers |
+| **Local dev** | ✅ Yes | ❌ No | ✅ Yes |
+| **Lambda/VMs** | ✅ Yes | ❌ No | ✅ Yes |
+| **Learning curve** | Minimal | Very low | High |
+
+### When to Combine Both
+
+Use **both** for maximum coverage:
+
+```go
+// SDK provides custom spans for business logic
+import "github.com/last9/go-agent"
+
+func ProcessPayment(ctx context.Context) {
+    // eBPF automatically traces HTTP and DB calls
+    // SDK adds custom business logic spans
+    span := agent.StartSpan(ctx, "process-payment")
+    defer span.End()
+
+    // Your business logic
+    validateCard()  // eBPF traces DB call automatically
+    chargeAmount()  // SDK provides custom span
+}
+```
+
+**Deploy:** Add eBPF annotation in K8s, SDK custom spans work automatically!
 
 ## 🏗️ Architecture
 
@@ -317,9 +440,12 @@ curl http://localhost:8080/hello/World
 
 ## 🔮 Roadmap
 
-- [ ] Chi framework support
-- [ ] Echo framework support
-- [ ] Gorilla Mux support
+- [x] Gin framework support
+- [x] Chi framework support
+- [x] Echo framework support
+- [x] Gorilla Mux support
+- [x] Resource attributes configuration
+- [ ] Fiber framework support
 - [ ] gRPC support
 - [ ] MongoDB instrumentation
 - [ ] Kafka instrumentation

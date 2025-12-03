@@ -159,6 +159,17 @@ func GetConfig() *config.Config {
 
 // createResource creates an OpenTelemetry resource with service information
 func createResource(cfg *config.Config) (*resource.Resource, error) {
+	// Build base attributes
+	baseAttrs := []attribute.KeyValue{
+		semconv.ServiceNameKey.String(cfg.ServiceName),
+		semconv.DeploymentEnvironmentKey.String(cfg.Environment),
+	}
+
+	// Add service version if available
+	if cfg.ServiceVersion != "" {
+		baseAttrs = append(baseAttrs, semconv.ServiceVersionKey.String(cfg.ServiceVersion))
+	}
+
 	attrs := []resource.Option{
 		resource.WithFromEnv(),
 		resource.WithTelemetrySDK(),
@@ -166,19 +177,12 @@ func createResource(cfg *config.Config) (*resource.Resource, error) {
 		resource.WithOS(),
 		resource.WithContainer(),
 		resource.WithHost(),
-		resource.WithAttributes(
-			semconv.ServiceNameKey.String(cfg.ServiceName),
-			semconv.DeploymentEnvironmentKey.String(cfg.Environment),
-		),
+		resource.WithAttributes(baseAttrs...),
 	}
 
 	// Add custom attributes from config
 	if len(cfg.ResourceAttributes) > 0 {
-		var customAttrs []resource.Option
-		for _, attr := range cfg.ResourceAttributes {
-			customAttrs = append(customAttrs, resource.WithAttributes(attr))
-		}
-		attrs = append(attrs, customAttrs...)
+		attrs = append(attrs, resource.WithAttributes(cfg.ResourceAttributes...))
 	}
 
 	return resource.New(context.Background(), attrs...)

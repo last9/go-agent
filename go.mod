@@ -6,10 +6,16 @@ toolchain go1.24.11
 
 require (
 	github.com/gin-gonic/gin v1.10.0
+	github.com/go-chi/chi/v5 v5.1.0
+	github.com/gorilla/mux v1.8.1
+	github.com/labstack/echo/v4 v4.13.3
 	github.com/redis/go-redis/extra/redisotel/v9 v9.7.0
 	github.com/redis/go-redis/v9 v9.7.0
+	github.com/riandyrn/otelchi v0.8.0
 	go.nhat.io/otelsql v0.16.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.56.0
+	go.opentelemetry.io/contrib/instrumentation/github.com/gorilla/mux/otelmux v0.56.0
+	go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.56.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace v0.63.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0
 	go.opentelemetry.io/otel v1.38.0
