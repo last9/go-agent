@@ -1,0 +1,85 @@
+// Package gin provides Last9 instrumentation for the Gin web framework
+package gin
+
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/last9/go-agent"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+)
+
+// New creates a new Gin engine with Last9 instrumentation automatically configured.
+// It's a drop-in replacement for gin.New() or gin.Default().
+//
+// The agent must be started before calling this function:
+//
+//	agent.Start()
+//	defer agent.Shutdown()
+//	r := gin.New()
+//
+// Example usage:
+//
+//	func main() {
+//	    agent.Start()
+//	    defer agent.Shutdown()
+//
+//	    r := gin.New()
+//	    r.GET("/ping", func(c *gin.Context) {
+//	        c.JSON(200, gin.H{"message": "pong"})
+//	    })
+//	    r.Run(":8080")
+//	}
+func New() *gin.Engine {
+	r := gin.New()
+	setupInstrumentation(r)
+	return r
+}
+
+// Default creates a new Gin engine with Logger, Recovery middleware and Last9 instrumentation.
+// It's a drop-in replacement for gin.Default() with automatic Last9 telemetry.
+//
+// Example usage:
+//
+//	func main() {
+//	    agent.Start()
+//	    defer agent.Shutdown()
+//
+//	    r := gin.Default() // Includes logging, recovery, and telemetry
+//	    r.GET("/ping", func(c *gin.Context) {
+//	        c.JSON(200, gin.H{"message": "pong"})
+//	    })
+//	    r.Run(":8080")
+//	}
+func Default() *gin.Engine {
+	r := gin.Default()
+	setupInstrumentation(r)
+	return r
+}
+
+// Middleware returns the Last9 instrumentation middleware for Gin.
+// Use this if you want to add instrumentation to an existing Gin engine.
+//
+// Example:
+//
+//	r := gin.New()
+//	r.Use(gin.Middleware())
+func Middleware() gin.HandlerFunc {
+	cfg := agent.GetConfig()
+	serviceName := "gin-service"
+	if cfg != nil {
+		serviceName = cfg.ServiceName
+	}
+	return otelgin.Middleware(serviceName)
+}
+
+// setupInstrumentation adds Last9 telemetry to a Gin engine
+func setupInstrumentation(r *gin.Engine) {
+	if !agent.IsInitialized() {
+		// Agent not initialized, try to start it
+		if err := agent.Start(); err != nil {
+			gin.DefaultWriter.Write([]byte("[Last9 Agent] Failed to auto-start: " + err.Error() + "\n"))
+			return
+		}
+	}
+
+	r.Use(Middleware())
+}
