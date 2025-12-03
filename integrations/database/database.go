@@ -20,8 +20,8 @@ type Config struct {
 	// DatabaseName is the name of the database (for telemetry)
 	DatabaseName string
 
-	// Additional otelsql options
-	Options []otelsql.Option
+	// Additional otelsql driver options
+	Options []otelsql.DriverOption
 }
 
 // Open opens a database connection with Last9 instrumentation.
@@ -39,8 +39,8 @@ type Config struct {
 //	}
 //	defer db.Close()
 func Open(cfg Config) (*sql.DB, error) {
-	// Default options
-	opts := []otelsql.Option{
+	// Default driver options
+	opts := []otelsql.DriverOption{
 		otelsql.AllowRoot(),
 		otelsql.TraceQueryWithoutArgs(),
 		otelsql.TraceRowsClose(),

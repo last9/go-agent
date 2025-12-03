@@ -4,6 +4,7 @@ package http
 import (
 	"context"
 	"net/http"
+	"net/http/httptrace"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -39,7 +40,7 @@ func NewClient(client *http.Client) *http.Client {
 	// Wrap transport with OpenTelemetry instrumentation
 	client.Transport = otelhttp.NewTransport(
 		client.Transport,
-		otelhttp.WithClientTrace(func(ctx context.Context) *http.Transport {
+		otelhttp.WithClientTrace(func(ctx context.Context) *httptrace.ClientTrace {
 			return otelhttptrace.NewClientTrace(ctx)
 		}),
 	)
