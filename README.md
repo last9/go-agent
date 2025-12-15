@@ -1,6 +1,6 @@
 # Last9 Go Agent
 
-A drop-in OpenTelemetry agent for Go applications that minimizes code changes while providing comprehensive observability.
+A drop-in OpenTelemetry agent for Go applications that minimizes code changes while providing comprehensive observability with automatic traces and metrics.
 
 [![CI](https://github.com/last9/go-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/last9/go-agent/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/last9/go-agent)](https://goreportcard.com/report/github.com/last9/go-agent)
@@ -8,7 +8,7 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Reference](https://pkg.go.dev/badge/github.com/last9/go-agent.svg)](https://pkg.go.dev/github.com/last9/go-agent)
 
-**87% less boilerplate** • **2-line setup** • **Zero config changes** • **Production-ready**
+**87% less boilerplate** • **2-line setup** • **Automatic traces + metrics** • **Production-ready**
 
 ## 📋 Table of Contents
 
@@ -29,9 +29,11 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 
 - 🚀 **One-line initialization** - `agent.Start()` replaces 150+ lines of OpenTelemetry setup
 - 🔌 **Drop-in replacements** - Minimal code changes for Gin, Chi, Echo, Gorilla, gRPC-Gateway
-- 🎯 **Auto-instrumentation** - HTTP, gRPC, SQL, Redis automatically traced with proper span nesting
+- 🎯 **Auto-instrumentation** - HTTP, gRPC, SQL, Redis, Kafka automatically traced with proper span nesting
+- 📊 **Automatic metrics** - Runtime (memory, GC, goroutines), HTTP, gRPC, database, Kafka, Redis metrics out-of-the-box
+- 📈 **Custom metrics** - Simple helpers for counters, histograms, gauges for business metrics
 - ⚙️ **Zero-config** - Reads from standard OpenTelemetry environment variables
-- 📊 **Complete traces** - Full distributed tracing across all layers (HTTP → gRPC → DB → External APIs)
+- 🔍 **Complete observability** - Full distributed tracing + metrics across all layers (HTTP → gRPC → DB → External APIs)
 - 🏭 **Production-tested** - Battle-tested across 70+ microservices
 
 ## 🎯 Problem
@@ -48,7 +50,9 @@ The Last9 Go Agent provides:
 - **Single line initialization**: `agent.Start()`
 - **Drop-in replacements** for popular frameworks
 - **Auto-configuration** from environment variables
-- **Pre-built integrations** for databases, Redis, and HTTP clients
+- **Pre-built integrations** for databases, Redis, Kafka, and HTTP clients
+- **Automatic metrics** for runtime, HTTP, gRPC, databases, Kafka, Redis
+- **Custom metrics helpers** for business-specific observability
 
 ## 🎭 Two Ways to Instrument Go with Last9
 
@@ -768,10 +772,13 @@ curl http://localhost:8080/hello/World
 - ✅ Distributed trace context propagation
 
 ### Automatic Metrics:
-- ✅ HTTP request duration and count
-- ✅ Database connection pool stats
-- ✅ Redis operation duration and count
-- ✅ Go runtime metrics (goroutines, memory, GC)
+- ✅ **Runtime**: Go memory (heap alloc), goroutines, GC cycles/pause times, CPU time
+- ✅ **HTTP/gRPC**: Request duration, request/response sizes, active requests, RPC latency
+- ✅ **Database**: Connection pool (usage, idle, max, wait/use/idle times)
+- ✅ **Kafka**: Messages sent/received, errors, send/process duration, message sizes
+- ✅ **Redis**: Pool usage, command duration, operation counts
+
+For detailed metrics list and custom metrics, see the [Metrics Support](#-metrics-support) section.
 
 ## 🧪 Testing
 
