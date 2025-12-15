@@ -27,6 +27,19 @@ type Config struct {
 // Open opens a database connection with Last9 instrumentation.
 // It wraps the standard sql.Open with automatic tracing and metrics.
 //
+// Traces collected:
+//   - Database query execution with SQL statements
+//   - Connection lifecycle events
+//   - Transaction operations
+//
+// Metrics collected:
+//   - db.client.connections.usage (gauge) - Number of connections in use
+//   - db.client.connections.idle (gauge) - Number of idle connections
+//   - db.client.connections.max (gauge) - Maximum number of open connections
+//   - db.client.connections.wait_time (histogram) - Time to acquire a connection
+//   - db.client.connections.use_time (histogram) - Time connections are in use
+//   - db.client.connections.idle_time (histogram) - Time connections are idle
+//
 // Example usage:
 //
 //	db, err := database.Open(database.Config{

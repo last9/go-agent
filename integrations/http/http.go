@@ -21,6 +21,12 @@ var DefaultClient = NewClient(nil)
 
 // NewClient creates a new HTTP client with Last9 instrumentation.
 // If client is nil, it uses http.DefaultTransport.
+// Automatically captures traces and metrics for all HTTP requests.
+//
+// Metrics collected:
+//   - http.client.request.duration (histogram)
+//   - http.client.request.body.size (histogram)
+//   - http.client.response.body.size (histogram)
 //
 // Example:
 //
@@ -37,7 +43,7 @@ func NewClient(client *http.Client) *http.Client {
 		client.Transport = http.DefaultTransport
 	}
 
-	// Wrap transport with OpenTelemetry instrumentation
+	// Wrap transport with OpenTelemetry instrumentation (includes metrics by default)
 	client.Transport = otelhttp.NewTransport(
 		client.Transport,
 		otelhttp.WithClientTrace(func(ctx context.Context) *httptrace.ClientTrace {

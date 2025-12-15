@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/last9/go-agent/config"
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -98,6 +99,11 @@ func Start() error {
 			),
 		)
 
+		// Start runtime metrics collection
+		if runtimeErr := runtime.Start(runtime.WithMinimumReadMemStatsInterval(15 * time.Second)); runtimeErr != nil {
+			log.Printf("[Last9 Agent] Warning: Failed to start runtime metrics: %v", runtimeErr)
+		}
+
 		globalAgent = &Agent{
 			config:         cfg,
 			tracerProvider: tp,
@@ -117,7 +123,7 @@ func Start() error {
 			},
 		}
 
-		log.Printf("[Last9 Agent] Started successfully for service: %s", cfg.ServiceName)
+		log.Printf("[Last9 Agent] Started successfully for service: %s (with runtime metrics)", cfg.ServiceName)
 	})
 	return err
 }

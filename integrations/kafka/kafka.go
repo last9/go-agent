@@ -10,12 +10,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/last9/go-agent"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -50,10 +52,15 @@ type ConsumerConfig struct {
 	Topics []string
 }
 
-// SyncProducer wraps sarama.SyncProducer with OpenTelemetry tracing.
+// SyncProducer wraps sarama.SyncProducer with OpenTelemetry tracing and metrics.
 type SyncProducer struct {
-	producer sarama.SyncProducer
-	tracer   trace.Tracer
+	producer         sarama.SyncProducer
+	tracer           trace.Tracer
+	meter            metric.Meter
+	messagesSent     metric.Int64Counter
+	messageErrors    metric.Int64Counter
+	sendDuration     metric.Float64Histogram
+	messageSizeBytes metric.Int64Histogram
 }
 
 // NewSyncProducer creates a new synchronous Kafka producer with automatic OpenTelemetry tracing.
@@ -95,15 +102,61 @@ func NewSyncProducer(cfg ProducerConfig) (*SyncProducer, error) {
 		return nil, err
 	}
 
+	// Create meter and metrics
+	meter := otel.Meter(instrumentationName)
+
+	messagesSent, err := meter.Int64Counter(
+		"messaging.kafka.messages.sent",
+		metric.WithDescription("Number of messages successfully sent to Kafka"),
+		metric.WithUnit("{message}"),
+	)
+	if err != nil {
+		log.Printf("[Last9 Agent] Warning: Failed to create messages_sent counter: %v", err)
+	}
+
+	messageErrors, err := meter.Int64Counter(
+		"messaging.kafka.messages.errors",
+		metric.WithDescription("Number of message send errors"),
+		metric.WithUnit("{error}"),
+	)
+	if err != nil {
+		log.Printf("[Last9 Agent] Warning: Failed to create message_errors counter: %v", err)
+	}
+
+	sendDuration, err := meter.Float64Histogram(
+		"messaging.kafka.send.duration",
+		metric.WithDescription("Duration of Kafka message send operations"),
+		metric.WithUnit("ms"),
+	)
+	if err != nil {
+		log.Printf("[Last9 Agent] Warning: Failed to create send_duration histogram: %v", err)
+	}
+
+	messageSizeBytes, err := meter.Int64Histogram(
+		"messaging.kafka.message.size",
+		metric.WithDescription("Size of Kafka messages in bytes"),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		log.Printf("[Last9 Agent] Warning: Failed to create message_size histogram: %v", err)
+	}
+
 	return &SyncProducer{
-		producer: producer,
-		tracer:   otel.Tracer(instrumentationName),
+		producer:         producer,
+		tracer:           otel.Tracer(instrumentationName),
+		meter:            meter,
+		messagesSent:     messagesSent,
+		messageErrors:    messageErrors,
+		sendDuration:     sendDuration,
+		messageSizeBytes: messageSizeBytes,
 	}, nil
 }
 
-// SendMessage sends a message to Kafka with automatic tracing.
+// SendMessage sends a message to Kafka with automatic tracing and metrics.
 // Context is used for trace propagation.
 func (p *SyncProducer) SendMessage(ctx context.Context, msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
+	startTime := time.Now()
+
 	// Start span
 	ctx, span := p.tracer.Start(ctx, fmt.Sprintf("%s send", msg.Topic),
 		trace.WithSpanKind(trace.SpanKindProducer),
@@ -120,18 +173,49 @@ func (p *SyncProducer) SendMessage(ctx context.Context, msg *sarama.ProducerMess
 	carrier := &producerMessageCarrier{msg: msg}
 	propagator.Inject(ctx, carrier)
 
+	// Calculate message size
+	var msgSize int64
+	if msg.Value != nil {
+		msgSize = int64(msg.Value.Length())
+	}
+
 	// Send message
 	partition, offset, err = p.producer.SendMessage(msg)
+
+	// Record duration
+	duration := time.Since(startTime).Milliseconds()
+	metricAttrs := []attribute.KeyValue{
+		attribute.String("messaging.system", "kafka"),
+		attribute.String("messaging.destination.name", msg.Topic),
+	}
 
 	// Record result
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
+
+		// Record error metric
+		if p.messageErrors != nil {
+			p.messageErrors.Add(ctx, 1, metric.WithAttributes(metricAttrs...))
+		}
 	} else {
 		span.SetAttributes(
 			attribute.Int("messaging.kafka.partition", int(partition)),
 			attribute.Int64("messaging.kafka.offset", offset),
 		)
+
+		// Record success metrics
+		if p.messagesSent != nil {
+			p.messagesSent.Add(ctx, 1, metric.WithAttributes(metricAttrs...))
+		}
+	}
+
+	// Record duration and size regardless of success/failure
+	if p.sendDuration != nil {
+		p.sendDuration.Record(ctx, float64(duration), metric.WithAttributes(metricAttrs...))
+	}
+	if p.messageSizeBytes != nil && msgSize > 0 {
+		p.messageSizeBytes.Record(ctx, msgSize, metric.WithAttributes(metricAttrs...))
 	}
 
 	return partition, offset, err
@@ -174,13 +258,17 @@ func (p *SyncProducer) Close() error {
 	return p.producer.Close()
 }
 
-// ConsumerGroupHandler wraps a user's ConsumerGroupHandler with OpenTelemetry tracing.
+// ConsumerGroupHandler wraps a user's ConsumerGroupHandler with OpenTelemetry tracing and metrics.
 type ConsumerGroupHandler struct {
-	handler sarama.ConsumerGroupHandler
-	tracer  trace.Tracer
+	handler          sarama.ConsumerGroupHandler
+	tracer           trace.Tracer
+	meter            metric.Meter
+	messagesReceived metric.Int64Counter
+	receiveErrors    metric.Int64Counter
+	processDuration  metric.Float64Histogram
 }
 
-// WrapConsumerGroupHandler wraps a Sarama ConsumerGroupHandler with OpenTelemetry tracing.
+// WrapConsumerGroupHandler wraps a Sarama ConsumerGroupHandler with OpenTelemetry tracing and metrics.
 //
 // Example:
 //
@@ -196,9 +284,43 @@ func WrapConsumerGroupHandler(handler sarama.ConsumerGroupHandler) *ConsumerGrou
 		}
 	}
 
+	// Create meter and metrics
+	meter := otel.Meter(instrumentationName)
+
+	messagesReceived, err := meter.Int64Counter(
+		"messaging.kafka.messages.received",
+		metric.WithDescription("Number of messages successfully received from Kafka"),
+		metric.WithUnit("{message}"),
+	)
+	if err != nil {
+		log.Printf("[Last9 Agent] Warning: Failed to create messages_received counter: %v", err)
+	}
+
+	receiveErrors, err := meter.Int64Counter(
+		"messaging.kafka.receive.errors",
+		metric.WithDescription("Number of message receive errors"),
+		metric.WithUnit("{error}"),
+	)
+	if err != nil {
+		log.Printf("[Last9 Agent] Warning: Failed to create receive_errors counter: %v", err)
+	}
+
+	processDuration, err := meter.Float64Histogram(
+		"messaging.kafka.process.duration",
+		metric.WithDescription("Duration of Kafka message processing"),
+		metric.WithUnit("ms"),
+	)
+	if err != nil {
+		log.Printf("[Last9 Agent] Warning: Failed to create process_duration histogram: %v", err)
+	}
+
 	return &ConsumerGroupHandler{
-		handler: handler,
-		tracer:  otel.Tracer(instrumentationName),
+		handler:          handler,
+		tracer:           otel.Tracer(instrumentationName),
+		meter:            meter,
+		messagesReceived: messagesReceived,
+		receiveErrors:    receiveErrors,
+		processDuration:  processDuration,
 	}
 }
 
@@ -212,9 +334,11 @@ func (h *ConsumerGroupHandler) Cleanup(session sarama.ConsumerGroupSession) erro
 	return h.handler.Cleanup(session)
 }
 
-// ConsumeClaim processes messages from a topic partition with automatic tracing.
+// ConsumeClaim processes messages from a topic partition with automatic tracing and metrics.
 func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for msg := range claim.Messages() {
+		startTime := time.Now()
+
 		// Extract trace context from message headers
 		ctx := ExtractContext(session.Context(), msg)
 
@@ -230,6 +354,11 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 			),
 		)
 
+		metricAttrs := []attribute.KeyValue{
+			attribute.String("messaging.system", "kafka"),
+			attribute.String("messaging.destination.name", msg.Topic),
+		}
+
 		// Create a wrapped session that includes the span context
 		wrappedSession := &tracedSession{
 			ConsumerGroupSession: session,
@@ -239,11 +368,29 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 		// Call the wrapped handler
 		err := h.handler.ConsumeClaim(wrappedSession, claim)
 
-		span.End()
+		// Record processing duration
+		duration := time.Since(startTime).Milliseconds()
+		if h.processDuration != nil {
+			h.processDuration.Record(ctx, float64(duration), metric.WithAttributes(metricAttrs...))
+		}
 
 		if err != nil {
+			// Record error
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			if h.receiveErrors != nil {
+				h.receiveErrors.Add(ctx, 1, metric.WithAttributes(metricAttrs...))
+			}
+			span.End()
 			return err
 		}
+
+		// Record successful message processing
+		if h.messagesReceived != nil {
+			h.messagesReceived.Add(ctx, 1, metric.WithAttributes(metricAttrs...))
+		}
+
+		span.End()
 	}
 	return nil
 }

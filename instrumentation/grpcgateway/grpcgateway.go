@@ -34,6 +34,12 @@ func NewGatewayMux(opts ...runtime.ServeMuxOption) *runtime.ServeMux {
 
 // NewGrpcServer creates a gRPC server with OpenTelemetry interceptors.
 // The server automatically traces all unary and streaming RPC calls.
+// Also collects metrics for request duration, request/response sizes.
+//
+// Metrics collected:
+//   - rpc.server.duration (histogram)
+//   - rpc.server.request.size (histogram)
+//   - rpc.server.response.size (histogram)
 //
 // The agent will be automatically initialized if not already done.
 //
@@ -63,6 +69,12 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 
 // WrapHTTPMux wraps an http.ServeMux with OpenTelemetry HTTP instrumentation.
 // This should be the outermost layer, capturing HTTP-level metrics and traces.
+//
+// Metrics collected:
+//   - http.server.request.duration (histogram)
+//   - http.server.request.body.size (histogram)
+//   - http.server.response.body.size (histogram)
+//   - http.server.active_requests (gauge)
 //
 // The serviceName parameter is used for naming the HTTP operation spans.
 //

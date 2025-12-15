@@ -19,6 +19,7 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 - [Redis Support](#-redis-support)
 - [Kafka Support](#-kafka-support) - Producers • Consumers
 - [HTTP Client](#-http-client-support)
+- [Metrics Support](#-metrics-support) - Automatic • Custom • Runtime
 - [Configuration](#️-configuration)
 - [Examples](#-complete-example)
 - [Testing](#-testing) - Running Tests • CI/CD
@@ -443,6 +444,198 @@ func main() {
     })
 
     r.Run(":8080")
+}
+```
+
+## 📊 Metrics Support
+
+The agent automatically collects metrics for all integrated services and provides helpers for custom metrics.
+
+### Automatic Metrics
+
+All integrations collect metrics automatically - no additional code needed:
+
+#### Runtime Metrics (Automatic)
+- `process.runtime.go.mem.heap_alloc` - Heap memory usage
+- `process.runtime.go.goroutines` - Number of goroutines
+- `process.runtime.go.gc.count` - GC cycle count
+- `process.runtime.go.gc.pause_ns` - GC pause duration
+
+#### HTTP/gRPC Metrics (Automatic)
+- `http.server.request.duration` - Server request latency
+- `http.server.request.body.size` - Request size
+- `http.server.response.body.size` - Response size
+- `http.server.active_requests` - Active requests (gauge)
+- `rpc.server.duration` - gRPC server request latency
+- `rpc.server.request.size` - gRPC request size
+- `rpc.server.response.size` - gRPC response size
+
+#### Database Metrics (Automatic)
+- `db.client.connections.usage` - Active connections
+- `db.client.connections.idle` - Idle connections
+- `db.client.connections.max` - Max connections
+- `db.client.connections.wait_time` - Time to acquire connection
+- `db.client.connections.use_time` - Connection usage duration
+- `db.client.connections.idle_time` - Connection idle duration
+
+#### Kafka Metrics (Automatic)
+- `messaging.kafka.messages.sent` - Messages produced
+- `messaging.kafka.messages.received` - Messages consumed
+- `messaging.kafka.messages.errors` - Producer errors
+- `messaging.kafka.receive.errors` - Consumer errors
+- `messaging.kafka.send.duration` - Producer latency
+- `messaging.kafka.process.duration` - Consumer processing time
+- `messaging.kafka.message.size` - Message size distribution
+
+#### Redis Metrics (Automatic)
+- `redis.pool.connections.usage` - Pool usage
+- `redis.pool.connections.idle` - Idle connections
+- `redis.command.duration` - Command latency
+
+### Custom Application Metrics
+
+Add your own business metrics using the `metrics` package:
+
+#### Counter - Monotonically increasing values
+
+```go
+import "github.com/last9/go-agent/metrics"
+
+// Create counter
+requestCounter := metrics.NewCounter(
+    "app.requests.total",
+    "Total number of requests processed",
+    "{request}",
+)
+
+// Increment
+requestCounter.Inc(ctx,
+    attribute.String("endpoint", "/api/users"),
+    attribute.String("method", "GET"),
+)
+
+// Add specific value
+requestCounter.Add(ctx, 5, attribute.String("batch", "yes"))
+```
+
+#### Histogram - Distribution of values
+
+```go
+// Create histogram for latency
+latencyHistogram := metrics.NewHistogram(
+    "app.processing.duration",
+    "Processing duration in milliseconds",
+    "ms",
+)
+
+// Record value
+start := time.Now()
+// ... do work ...
+duration := time.Since(start).Milliseconds()
+latencyHistogram.Record(ctx, duration,
+    attribute.String("operation", "compute"),
+)
+```
+
+#### Gauge - Current value (async callback)
+
+```go
+var activeWorkers int64
+
+// Create gauge with callback
+workerGauge := metrics.NewGauge(
+    "app.workers.active",
+    "Number of active worker goroutines",
+    "{worker}",
+    func(ctx context.Context) int64 {
+        return atomic.LoadInt64(&activeWorkers)
+    },
+)
+
+// Gauge is automatically updated by callback
+atomic.AddInt64(&activeWorkers, 1)  // Increment
+// ... gauge reflects new value on next collection
+```
+
+#### UpDownCounter - Value that can increase or decrease
+
+```go
+// Create up-down counter for queue
+queueSize := metrics.NewUpDownCounter(
+    "app.queue.size",
+    "Number of items in processing queue",
+    "{item}",
+)
+
+// Add items
+queueSize.Add(ctx, 10, attribute.String("queue", "high-priority"))
+
+// Remove items (negative value)
+queueSize.Add(ctx, -5, attribute.String("queue", "high-priority"))
+```
+
+### Metric Units
+
+Use standard UCUM units for consistency:
+- **Time**: `ms` (milliseconds), `s` (seconds)
+- **Bytes**: `By` (bytes), `kBy` (kilobytes), `MBy` (megabytes)
+- **Count**: `{item}`, `{request}`, `{error}`, `{connection}`
+- **Percent**: `%`
+
+### Complete Metrics Example
+
+```go
+package main
+
+import (
+    "context"
+    "time"
+
+    "github.com/last9/go-agent"
+    "github.com/last9/go-agent/metrics"
+    "go.opentelemetry.io/otel/attribute"
+)
+
+var (
+    // Business metrics
+    ordersProcessed = metrics.NewCounter(
+        "app.orders.processed",
+        "Total orders processed",
+        "{order}",
+    )
+
+    orderValue = metrics.NewFloatHistogram(
+        "app.order.value",
+        "Order value in USD",
+        "USD",
+    )
+
+    processingDuration = metrics.NewHistogram(
+        "app.order.processing.duration",
+        "Order processing duration",
+        "ms",
+    )
+)
+
+func main() {
+    agent.Start()
+    defer agent.Shutdown()
+
+    ctx := context.Background()
+
+    // Process order
+    start := time.Now()
+    processOrder(ctx, 123.45)
+    duration := time.Since(start).Milliseconds()
+
+    // Record metrics
+    ordersProcessed.Inc(ctx, attribute.String("status", "success"))
+    orderValue.Record(ctx, 123.45, attribute.String("category", "electronics"))
+    processingDuration.Record(ctx, duration)
+}
+
+func processOrder(ctx context.Context, value float64) {
+    // Business logic...
 }
 ```
 
