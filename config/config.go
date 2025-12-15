@@ -11,6 +11,9 @@ import (
 
 // Config holds the agent configuration
 type Config struct {
+	// Headers contains additional headers for OTLP requests (from OTEL_EXPORTER_OTLP_HEADERS)
+	Headers map[string]string
+
 	// ServiceName is the name of the service (from OTEL_SERVICE_NAME)
 	ServiceName string
 
@@ -23,14 +26,11 @@ type Config struct {
 	// Endpoint is the OTLP endpoint (from OTEL_EXPORTER_OTLP_ENDPOINT)
 	Endpoint string
 
-	// Headers contains additional headers for OTLP requests (from OTEL_EXPORTER_OTLP_HEADERS)
-	Headers map[string]string
+	// Sampler is the trace sampling strategy (from OTEL_TRACES_SAMPLER)
+	Sampler string
 
 	// ResourceAttributes contains additional resource attributes
 	ResourceAttributes []attribute.KeyValue
-
-	// Sampler is the trace sampling strategy (from OTEL_TRACES_SAMPLER)
-	Sampler string
 }
 
 // Load reads configuration from environment variables

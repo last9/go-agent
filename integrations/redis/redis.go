@@ -26,7 +26,9 @@ import (
 //	err := rdb.Set(ctx, "key", "value", 0).Err()
 func NewClient(opts *redis.Options) *redis.Client {
 	client := redis.NewClient(opts)
-	setupInstrumentation(client)
+	if err := setupInstrumentation(client); err != nil {
+		log.Printf("[Last9 Agent] Warning: Failed to instrument Redis client: %v", err)
+	}
 	return client
 }
 
@@ -40,7 +42,9 @@ func NewClient(opts *redis.Options) *redis.Client {
 //	defer rdb.Close()
 func NewClusterClient(opts *redis.ClusterOptions) *redis.ClusterClient {
 	client := redis.NewClusterClient(opts)
-	setupClusterInstrumentation(client)
+	if err := setupClusterInstrumentation(client); err != nil {
+		log.Printf("[Last9 Agent] Warning: Failed to instrument Redis cluster client: %v", err)
+	}
 	return client
 }
 

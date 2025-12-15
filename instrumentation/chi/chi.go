@@ -2,6 +2,8 @@
 package chi
 
 import (
+	"net/http"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/last9/go-agent"
 	"github.com/riandyrn/otelchi"

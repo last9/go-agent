@@ -2,6 +2,37 @@
 
 A drop-in OpenTelemetry agent for Go applications that minimizes code changes while providing comprehensive observability.
 
+[![CI](https://github.com/last9/go-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/last9/go-agent/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/last9/go-agent)](https://goreportcard.com/report/github.com/last9/go-agent)
+[![codecov](https://codecov.io/gh/last9/go-agent/branch/main/graph/badge.svg)](https://codecov.io/gh/last9/go-agent)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Reference](https://pkg.go.dev/badge/github.com/last9/go-agent.svg)](https://pkg.go.dev/github.com/last9/go-agent)
+
+**87% less boilerplate** • **2-line setup** • **Zero config changes** • **Production-ready**
+
+## 📋 Table of Contents
+
+- [Key Features](#-key-features)
+- [Quick Start](#-sdk-quick-start-this-repo)
+- [Framework Support](#-framework-support) - Gin • Chi • Echo • Gorilla • gRPC-Gateway
+- [Database Support](#️-database-support) - PostgreSQL • MySQL • SQLite
+- [Redis Support](#-redis-support)
+- [Kafka Support](#-kafka-support) - Producers • Consumers
+- [HTTP Client](#-http-client-support)
+- [Configuration](#️-configuration)
+- [Examples](#-complete-example)
+- [Testing](#-testing) - Running Tests • CI/CD
+- [SDK vs eBPF](#-sdk-vs-ebpf-full-comparison)
+
+## ✨ Key Features
+
+- 🚀 **One-line initialization** - `agent.Start()` replaces 150+ lines of OpenTelemetry setup
+- 🔌 **Drop-in replacements** - Minimal code changes for Gin, Chi, Echo, Gorilla, gRPC-Gateway
+- 🎯 **Auto-instrumentation** - HTTP, gRPC, SQL, Redis automatically traced with proper span nesting
+- ⚙️ **Zero-config** - Reads from standard OpenTelemetry environment variables
+- 📊 **Complete traces** - Full distributed tracing across all layers (HTTP → gRPC → DB → External APIs)
+- 🏭 **Production-tested** - Battle-tested across 70+ microservices
+
 ## 🎯 Problem
 
 Existing OpenTelemetry integrations require significant code changes:
@@ -182,6 +213,40 @@ func main() {
 }
 ```
 
+### gRPC-Gateway
+
+```go
+import (
+    "github.com/last9/go-agent"
+    "github.com/last9/go-agent/instrumentation/grpcgateway"
+)
+
+func main() {
+    agent.Start()
+    defer agent.Shutdown()
+
+    // gRPC server (auto-instrumented)
+    grpcServer := grpcgateway.NewGrpcServer()
+    pb.RegisterYourServiceServer(grpcServer, &server{})
+
+    // gRPC-Gateway mux (auto-instrumented)
+    gwMux := grpcgateway.NewGatewayMux()
+
+    // gRPC client connection (auto-instrumented)
+    conn, _ := grpc.NewClient("localhost:50051",
+        grpc.WithTransportCredentials(insecure.NewCredentials()),
+        grpcgateway.NewDialOption(),
+    )
+
+    // HTTP wrapper (auto-instrumented)
+    httpMux := http.NewServeMux()
+    httpMux.Handle("/", gwMux)
+    handler := grpcgateway.WrapHTTPMux(httpMux, "my-gateway")
+
+    http.ListenAndServe(":8080", handler)
+}
+```
+
 ## 🗄️ Database Support
 
 ### PostgreSQL / MySQL / SQLite
@@ -235,19 +300,89 @@ rdb := redisagent.NewClusterClient(&redis.ClusterOptions{
 })
 ```
 
+## 📨 Kafka Support
+
+### Producer (Sync)
+
+```go
+import kafkaagent "github.com/last9/go-agent/integrations/kafka"
+
+// Create instrumented producer
+producer, err := kafkaagent.NewSyncProducer(kafkaagent.ProducerConfig{
+    Brokers: []string{"localhost:9092"},
+})
+defer producer.Close()
+
+// Send message (automatically traced with context propagation)
+partition, offset, err := producer.SendMessage(ctx, &sarama.ProducerMessage{
+    Topic: "my-topic",
+    Value: sarama.StringEncoder("Hello Kafka"),
+})
+```
+
+### Consumer (Consumer Group)
+
+```go
+import kafkaagent "github.com/last9/go-agent/integrations/kafka"
+
+// Implement your handler
+type MyHandler struct{}
+
+func (h *MyHandler) Setup(session sarama.ConsumerGroupSession) error {
+    return nil
+}
+
+func (h *MyHandler) Cleanup(session sarama.ConsumerGroupSession) error {
+    return nil
+}
+
+func (h *MyHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+    for msg := range claim.Messages() {
+        // Message context includes trace from producer
+        ctx := session.Context()
+
+        // Process message
+        log.Printf("Message: %s", string(msg.Value))
+
+        // Mark message as processed
+        session.MarkMessage(msg, "")
+    }
+    return nil
+}
+
+// Create consumer group
+consumer, err := kafkaagent.NewConsumerGroup(kafkaagent.ConsumerConfig{
+    Brokers: []string{"localhost:9092"},
+    GroupID: "my-consumer-group",
+})
+defer consumer.Close()
+
+// Wrap handler for automatic tracing
+handler := kafkaagent.WrapConsumerGroupHandler(&MyHandler{})
+
+// Consume messages (automatically traced)
+consumer.Consume(ctx, []string{"my-topic"}, handler)
+```
+
 ## 🌐 HTTP Client Support
 
 ```go
-import httpagent "github.com/last9/go-agent/integrations/http"
+import (
+    "net/http"
+    "net/http/httptrace"
+    httpagent "github.com/last9/go-agent/integrations/http"
+    "go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace"
+)
 
-// Use instrumented client
-client := httpagent.DefaultClient
-resp, err := client.Get("https://api.example.com/data")
-
-// Or create a custom client
+// Create instrumented client
 client := httpagent.NewClient(&http.Client{
     Timeout: 10 * time.Second,
 })
+
+// Make request with proper trace nesting
+ctx = httptrace.WithClientTrace(ctx, otelhttptrace.NewClientTrace(ctx))
+req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.example.com/data", nil)
+resp, err := client.Do(req)
 ```
 
 ## 📖 Complete Example
@@ -396,10 +531,15 @@ last9/go-agent/
 ├── agent.go                    # Core agent (Start/Shutdown)
 ├── config/                     # Configuration management
 ├── instrumentation/
-│   └── gin/                    # Framework integrations
+│   ├── gin/                    # Gin framework
+│   ├── chi/                    # Chi framework
+│   ├── echo/                   # Echo framework
+│   ├── gorilla/                # Gorilla Mux
+│   └── grpcgateway/            # gRPC-Gateway
 ├── integrations/
 │   ├── database/               # SQL instrumentation
 │   ├── redis/                  # Redis instrumentation
+│   ├── kafka/                  # Kafka instrumentation (IBM Sarama)
 │   └── http/                   # HTTP client instrumentation
 └── examples/                   # Usage examples
 ```
@@ -426,11 +566,13 @@ curl http://localhost:8080/hello/World
 
 ### Automatic Instrumentation:
 - ✅ HTTP requests (endpoint, method, status code, duration)
+- ✅ gRPC calls (service, method, status code)
 - ✅ Database queries (query, duration, rows affected)
 - ✅ Redis commands (command, duration)
+- ✅ Kafka messages (topic, partition, offset, context propagation)
 - ✅ External API calls (URL, method, status code)
 - ✅ Errors and exceptions
-- ✅ Request context propagation
+- ✅ Distributed trace context propagation
 
 ### Automatic Metrics:
 - ✅ HTTP request duration and count
@@ -438,17 +580,142 @@ curl http://localhost:8080/hello/World
 - ✅ Redis operation duration and count
 - ✅ Go runtime metrics (goroutines, memory, GC)
 
+## 🧪 Testing
+
+### Running Tests Locally
+
+The go-agent has comprehensive integration tests that verify instrumentation with real services.
+
+#### Prerequisites
+
+- Docker and Docker Compose (for integration tests)
+- Go 1.22+ installed
+- `buf` CLI (for generating proto files): `go install github.com/bufbuild/buf/cmd/buf@latest`
+
+#### Quick Start
+
+```bash
+# Run all tests (unit + integration)
+make test
+
+# Run only unit tests (fast, no Docker required)
+make test-unit
+
+# Run only integration tests (requires Docker)
+make docker-up          # Start test services
+make test-integration   # Run integration tests
+make docker-down        # Stop test services
+```
+
+#### Manual Setup
+
+```bash
+# 1. Start test services (Kafka, PostgreSQL, Redis, MySQL)
+docker-compose -f docker-compose.test.yml up -d
+
+# 2. Wait for services to be ready (automatic in Makefile)
+# Check with: docker-compose -f docker-compose.test.yml ps
+
+# 3. Run tests
+go test -v ./...                                    # Unit tests
+go test -v -tags=integration ./tests/integration/  # Integration tests
+
+# 4. Stop services
+docker-compose -f docker-compose.test.yml down -v
+```
+
+### Test Structure
+
+```
+tests/
+├── testutil/              # Test utilities
+│   ├── otel_collector.go  # Mock OTLP collector
+│   ├── span_assertions.go # Span verification helpers
+│   └── context_helpers.go # Context propagation utilities
+└── integration/           # Integration tests
+    ├── kafka_test.go      # Kafka producer/consumer tests
+    ├── grpc_gateway_test.go  # gRPC-Gateway full stack tests
+    └── testdata/          # Test protobuf definitions
+```
+
+### Integration Tests
+
+Integration tests use **testcontainers-go** to run real services:
+- **Kafka**: Producer/consumer with end-to-end context propagation
+- **gRPC-Gateway**: Full HTTP → gRPC → Handler flow
+- **PostgreSQL/MySQL**: Database query instrumentation
+- **Redis**: Command instrumentation
+
+Tests verify:
+- ✅ Spans are created correctly
+- ✅ Trace context propagates across service boundaries
+- ✅ Semantic conventions are followed
+- ✅ Error handling works properly
+
+### Linting
+
+```bash
+# Install golangci-lint
+# See: https://golangci-lint.run/usage/install/
+
+# Run linter
+make lint
+```
+
+### CI/CD
+
+The project uses GitHub Actions for continuous integration:
+- **Lint**: Code quality checks with golangci-lint
+- **Unit Tests**: Fast tests across Go 1.22, 1.23, 1.24
+- **Integration Tests**: Real service tests with Kafka, Postgres, Redis, MySQL
+- **Build**: Verify all packages and examples compile
+
+See [`.github/workflows/ci.yml`](.github/workflows/ci.yml) for details.
+
+### Writing Tests
+
+When adding new instrumentation, follow this pattern:
+
+```go
+//go:build integration
+
+package integration
+
+func TestMyIntegration_Tracing(t *testing.T) {
+    // 1. Setup mock collector
+    collector := testutil.NewMockCollector()
+    defer collector.Shutdown(context.Background())
+
+    // 2. Initialize agent
+    agent.Start()
+    defer agent.Shutdown()
+
+    // 3. Perform instrumented operation
+    // ... your test code ...
+
+    // 4. Verify spans
+    spans := collector.GetSpans()
+    testutil.AssertSpanCount(t, spans, expectedCount)
+    testutil.AssertSpanAttribute(t, spans[0], "key", "value")
+}
+```
+
+See [`tests/integration/kafka_test.go`](tests/integration/kafka_test.go) for a complete example.
+
 ## 🔮 Roadmap
 
 - [x] Gin framework support
 - [x] Chi framework support
 - [x] Echo framework support
 - [x] Gorilla Mux support
+- [x] gRPC-Gateway support
+- [x] PostgreSQL / MySQL / SQLite support
+- [x] Redis support
+- [x] Kafka support (IBM Sarama)
+- [x] HTTP client instrumentation
 - [x] Resource attributes configuration
 - [ ] Fiber framework support
-- [ ] gRPC support
 - [ ] MongoDB instrumentation
-- [ ] Kafka instrumentation
 - [ ] Custom span creation helpers
 - [ ] Automatic runtime metrics
 - [ ] Performance profiling integration

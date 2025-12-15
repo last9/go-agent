@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package testproto;
+
+option go_package = "github.com/last9/go-agent/tests/integration/testdata;testproto";
+
+import "google/api/annotations.proto";
+
+// TestService is a simple service for testing gRPC-Gateway integration
+service TestService {
+  // SayHello returns a greeting message
+  rpc SayHello(HelloRequest) returns (HelloResponse) {
+    option (google.api.http) = {
+      post: "/v1/test/hello"
+      body: "*"
+    };
+  }
+}
+
+// HelloRequest is the request message
+message HelloRequest {
+  string name = 1;
+}
+
+// HelloResponse is the response message
+message HelloResponse {
+  string message = 1;
+}

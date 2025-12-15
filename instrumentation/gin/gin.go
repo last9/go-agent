@@ -76,7 +76,12 @@ func setupInstrumentation(r *gin.Engine) {
 	if !agent.IsInitialized() {
 		// Agent not initialized, try to start it
 		if err := agent.Start(); err != nil {
-			gin.DefaultWriter.Write([]byte("[Last9 Agent] Failed to auto-start: " + err.Error() + "\n"))
+			// Log error but continue - instrumentation will be disabled
+			msg := "[Last9 Agent] Failed to auto-start: " + err.Error() + "\n"
+			if _, writeErr := gin.DefaultWriter.Write([]byte(msg)); writeErr != nil {
+				// Can't log the error anywhere, silent failure
+				return
+			}
 			return
 		}
 	}

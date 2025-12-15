@@ -10,6 +10,8 @@
 
 # Output of the go coverage tool
 *.out
+coverage.out
+coverage.html
 
 # Go workspace file
 go.work
@@ -26,6 +28,7 @@ vendor/
 # IDE
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 *~
@@ -37,3 +40,13 @@ Thumbs.db
 # Build output
 bin/
 dist/
+
+# Compiled Go binaries (example binaries)
+example-gin
+example-gin-full
+examples/*/main
+examples/gin/gin
+examples/gin-full/gin-full
+
+# Test artifacts
+*.log
