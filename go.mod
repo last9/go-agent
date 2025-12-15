@@ -7,7 +7,7 @@ toolchain go1.24.11
 require (
 	github.com/IBM/sarama v1.43.3
 	github.com/gin-gonic/gin v1.10.0
-	github.com/go-chi/chi/v5 v5.1.0
+	github.com/go-chi/chi/v5 v5.2.2
 	github.com/gorilla/mux v1.8.1
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.22.0
 	github.com/labstack/echo/v4 v4.13.1
