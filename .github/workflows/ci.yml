@@ -1,0 +1,211 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+  test-unit:
+    name: Unit Tests (Go ${{ matrix.go-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.22', '1.23', '1.24']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ matrix.go-version }}-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run unit tests
+        run: go test -v -race -short -coverprofile=coverage.out ./...
+
+      - name: Upload coverage to Codecov
+        if: matrix.go-version == '1.24'
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+
+  test-integration:
+    name: Integration Tests (Go ${{ matrix.go-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        go-version: ['1.23', '1.24']
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root_password
+          MYSQL_DATABASE: test_db
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: test_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -u test_user -ptest_password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ matrix.go-version }}-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install buf CLI
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          version: '1.32.0'
+
+      - name: Generate proto files
+        run: |
+          cd tests/integration/testdata
+          buf dep update
+          buf generate
+
+      - name: Run integration tests
+        env:
+          TEST_POSTGRES_DSN: "postgres://test_user:test_password@localhost:5432/test_db?sslmode=disable"
+          TEST_MYSQL_DSN: "test_user:test_password@tcp(localhost:3306)/test_db"
+          TEST_REDIS_ADDR: "localhost:6379"
+          TEST_KAFKA_BROKERS: "localhost:9092"
+        run: |
+          # Run gRPC-Gateway tests (more reliable)
+          go test -v -race -tags=integration -timeout=10m ./tests/integration/... -run=TestGrpcGateway
+          # Run Kafka wrapper test (doesn't need Kafka container)
+          go test -v -race -tags=integration -timeout=5m ./tests/integration/... -run=TestKafkaConsumer_WrapHandler
+
+      - name: Stop Kafka container
+        if: always()
+        run: docker rm -f kafka || true
+
+      - name: Upload integration test coverage
+        if: matrix.go-version == '1.24'
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: integrationtests
+          name: codecov-integration
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test-unit]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-1.24-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-1.24-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build all packages
+        run: go build ./...
+
+      - name: Build examples
+        run: |
+          cd examples/gin && go build -o ../../bin/example-gin main.go
+          cd ../gin-full && go build -o ../../bin/example-gin-full main.go
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: bin/
