@@ -41,12 +41,5 @@ Thumbs.db
 bin/
 dist/
 
-# Compiled Go binaries (example binaries)
-example-gin
-example-gin-full
-examples/*/main
-examples/gin/gin
-examples/gin-full/gin-full
-
 # Test artifacts
 *.log

@@ -5,7 +5,7 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 [![CI](https://github.com/last9/go-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/last9/go-agent/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/last9/go-agent)](https://goreportcard.com/report/github.com/last9/go-agent)
 [![codecov](https://codecov.io/gh/last9/go-agent/branch/main/graph/badge.svg)](https://codecov.io/gh/last9/go-agent)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Go Reference](https://pkg.go.dev/badge/github.com/last9/go-agent.svg)](https://pkg.go.dev/github.com/last9/go-agent)
 
 **87% less boilerplate** • **2-line setup** • **Automatic traces + metrics** • **Production-ready**
@@ -738,25 +738,7 @@ last9/go-agent/
 │   ├── redis/                  # Redis instrumentation
 │   ├── kafka/                  # Kafka instrumentation (IBM Sarama)
 │   └── http/                   # HTTP client instrumentation
-└── examples/                   # Usage examples
-```
-
-## 🧪 Running the Example
-
-```bash
-cd examples/gin
-
-# Copy and edit environment variables
-cp .env.example .env
-# Edit .env with your Last9 credentials
-
-# Run the example
-source .env
-go run main.go
-
-# Test endpoints
-curl http://localhost:8080/ping
-curl http://localhost:8080/hello/World
+└── tests/                      # Integration tests
 ```
 
 ## 📊 What Gets Traced?
@@ -914,11 +896,11 @@ See [`tests/integration/kafka_test.go`](tests/integration/kafka_test.go) for a c
 - [x] Kafka support (IBM Sarama)
 - [x] HTTP client instrumentation
 - [x] Resource attributes configuration
+- [x] Automatic runtime metrics
+- [x] Custom metrics helpers
 - [ ] Fiber framework support
 - [ ] MongoDB instrumentation
 - [ ] Custom span creation helpers
-- [ ] Automatic runtime metrics
-- [ ] Performance profiling integration
 
 ## 🤝 Contributing
 
@@ -930,7 +912,7 @@ Contributions welcome! Please:
 
 ## 📄 License
 
-MIT License - see LICENSE file for details
+Apache License 2.0 - see LICENSE file for details
 
 ## 🆘 Support
 
@@ -943,7 +925,3 @@ MIT License - see LICENSE file for details
 Built on top of:
 - [OpenTelemetry Go](https://github.com/open-telemetry/opentelemetry-go)
 - [OpenTelemetry Go Contrib](https://github.com/open-telemetry/opentelemetry-go-contrib)
-
-Inspired by:
-- [New Relic Go Agent](https://github.com/newrelic/go-agent)
-- [DataDog Go Tracer](https://github.com/DataDog/dd-trace-go)

@@ -156,3 +156,49 @@ func AssertSpanInSameTrace(t *testing.T, spans []sdktrace.ReadOnlySpan) {
 			"span %d should have same trace ID", i)
 	}
 }
+
+// FindSpanByKind finds the first span with the specified kind.
+// Returns nil if not found.
+func FindSpanByKind(spans []sdktrace.ReadOnlySpan, kind trace.SpanKind) sdktrace.ReadOnlySpan {
+	for _, span := range spans {
+		if span.SpanKind() == kind {
+			return span
+		}
+	}
+	return nil
+}
+
+// FindSpansByKind finds all spans with the specified kind.
+func FindSpansByKind(spans []sdktrace.ReadOnlySpan, kind trace.SpanKind) []sdktrace.ReadOnlySpan {
+	var result []sdktrace.ReadOnlySpan
+	for _, span := range spans {
+		if span.SpanKind() == kind {
+			result = append(result, span)
+		}
+	}
+	return result
+}
+
+// FindSpanByNameContains finds a span whose name contains the substring.
+func FindSpanByNameContains(spans []sdktrace.ReadOnlySpan, substr string) sdktrace.ReadOnlySpan {
+	for _, span := range spans {
+		if contains(span.Name(), substr) {
+			return span
+		}
+	}
+	return nil
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > 0 && len(substr) > 0 && searchSubstring(s, substr)))
+}
+
+func searchSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

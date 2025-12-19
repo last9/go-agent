@@ -1,4 +1,28 @@
-// Package chi provides Last9 instrumentation for the Chi web framework
+// Package chi provides Last9 instrumentation for the Chi web framework.
+//
+// Due to Chi's middleware design, instrumentation must be applied AFTER routes
+// are defined. Use the Use() function to wrap your router.
+//
+// Example:
+//
+//	import (
+//	    "github.com/go-chi/chi/v5"
+//	    "github.com/last9/go-agent"
+//	    chiagent "github.com/last9/go-agent/instrumentation/chi"
+//	)
+//
+//	func main() {
+//	    agent.Start()
+//	    defer agent.Shutdown()
+//
+//	    r := chi.NewRouter()
+//	    r.Get("/ping", pingHandler)
+//	    r.Get("/users/{id}", getUserHandler)
+//
+//	    // Wrap with instrumentation AFTER defining routes
+//	    handler := chiagent.Use(r)
+//	    http.ListenAndServe(":8080", handler)
+//	}
 package chi
 
 import (
@@ -9,30 +33,22 @@ import (
 	"github.com/riandyrn/otelchi"
 )
 
-// New creates a new Chi router with Last9 instrumentation automatically configured.
-// It's a drop-in replacement for chi.NewRouter().
+// New creates a new Chi router.
 //
-// The agent must be started before calling this function:
+// IMPORTANT: This does NOT automatically add instrumentation because Chi requires
+// middleware to be applied after routes are defined for proper route pattern capture.
+// You must call Use(router) after defining your routes.
 //
-//	agent.Start()
-//	defer agent.Shutdown()
-//	r := chi.New()
+// Example:
 //
-// Example usage:
-//
-//	func main() {
-//	    agent.Start()
-//	    defer agent.Shutdown()
-//
-//	    r := chi.New()
-//	    r.Get("/ping", func(w http.ResponseWriter, r *http.Request) {
-//	        w.Write([]byte("pong"))
-//	    })
-//	    http.ListenAndServe(":8080", r)
-//	}
+//	r := chiagent.New()
+//	r.Get("/ping", pingHandler)
+//	r.Get("/users/{id}", getUserHandler)
+//	handler := chiagent.Use(r)  // Apply instrumentation
+//	http.ListenAndServe(":8080", handler)
 func New() *chi.Mux {
 	r := chi.NewRouter()
-	setupInstrumentation(r)
+	ensureAgentStarted()
 	return r
 }
 
@@ -42,16 +58,13 @@ func NewRouter() *chi.Mux {
 }
 
 // Middleware returns the Last9 instrumentation middleware for Chi.
-// Use this if you want to add instrumentation to an existing Chi router.
 //
-// IMPORTANT: Add this middleware AFTER defining all your routes to ensure
-// proper route pattern capture.
+// NOTE: In Chi v5, calling router.Use() after routes are defined will panic.
+// Use the Use() function instead, which returns a wrapped http.Handler.
 //
-// Example:
-//
-//	r := chi.NewRouter()
-//	r.Get("/users/{id}", GetUserHandler)
-//	r.Use(chi.Middleware(r))  // Add AFTER routes
+// This function is provided for cases where you need the raw middleware,
+// such as adding it to a router BEFORE defining routes (though this won't
+// capture route patterns properly).
 func Middleware(router *chi.Mux) func(next http.Handler) http.Handler {
 	cfg := agent.GetConfig()
 	serviceName := "chi-service"
@@ -61,34 +74,43 @@ func Middleware(router *chi.Mux) func(next http.Handler) http.Handler {
 
 	return otelchi.Middleware(
 		serviceName,
-		otelchi.WithChiRoutes(router), // Capture route patterns
+		otelchi.WithChiRoutes(router),
 	)
 }
 
-// setupInstrumentation adds Last9 telemetry to a Chi router
-func setupInstrumentation(r *chi.Mux) {
+// ensureAgentStarted starts the agent if not already initialized
+func ensureAgentStarted() {
 	if !agent.IsInitialized() {
-		// Agent not initialized, try to start it
-		if err := agent.Start(); err != nil {
-			// Log error but don't fail - user might initialize later
-			return
-		}
+		_ = agent.Start()
 	}
-
-	// Note: We can't add middleware here because routes aren't defined yet.
-	// The user should call Use(Middleware(r)) after defining routes,
-	// or use the helper below.
 }
 
-// Use adds the Last9 instrumentation middleware to the router.
-// This is a convenience function that should be called AFTER all routes are defined.
+// Use wraps a Chi router with Last9 instrumentation and returns an http.Handler.
+// This is the recommended way to add instrumentation to Chi.
+//
+// IMPORTANT: Call this AFTER all routes are defined to ensure proper route
+// pattern capture (e.g., "/users/{id}" instead of "/users/123").
 //
 // Example:
 //
-//	r := chi.New()
-//	r.Get("/users/{id}", GetUserHandler)
-//	r.Post("/users", CreateUserHandler)
-//	chi.Use(r)  // Add instrumentation AFTER routes
-func Use(router *chi.Mux) {
-	router.Use(Middleware(router))
+//	r := chi.NewRouter()
+//	r.Get("/users/{id}", getUserHandler)
+//	r.Post("/users", createUserHandler)
+//
+//	handler := chiagent.Use(r)  // Wrap AFTER routes
+//	http.ListenAndServe(":8080", handler)
+func Use(router *chi.Mux) http.Handler {
+	ensureAgentStarted()
+
+	cfg := agent.GetConfig()
+	serviceName := "chi-service"
+	if cfg != nil {
+		serviceName = cfg.ServiceName
+	}
+
+	middleware := otelchi.Middleware(
+		serviceName,
+		otelchi.WithChiRoutes(router),
+	)
+	return middleware(router)
 }
