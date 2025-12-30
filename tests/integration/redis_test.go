@@ -58,9 +58,10 @@ func TestRedis_SetGet(t *testing.T) {
 	defer collector.Shutdown(ctx)
 
 	// Create instrumented Redis client
-	rdb := redisagent.NewClient(&redis.Options{
+	rdb, err := redisagent.NewClient(&redis.Options{
 		Addr: endpoint,
 	})
+	require.NoError(t, err)
 	defer rdb.Close()
 
 	// Verify connection
@@ -106,9 +107,10 @@ func TestRedis_Hash(t *testing.T) {
 	collector := testutil.NewMockCollector()
 	defer collector.Shutdown(ctx)
 
-	rdb := redisagent.NewClient(&redis.Options{
+	rdb, err := redisagent.NewClient(&redis.Options{
 		Addr: endpoint,
 	})
+	require.NoError(t, err)
 	defer rdb.Close()
 
 	ctx, parentSpan := testutil.CreateTestSpan(ctx, "test-hash-parent")
@@ -149,9 +151,10 @@ func TestRedis_List(t *testing.T) {
 	collector := testutil.NewMockCollector()
 	defer collector.Shutdown(ctx)
 
-	rdb := redisagent.NewClient(&redis.Options{
+	rdb, err := redisagent.NewClient(&redis.Options{
 		Addr: endpoint,
 	})
+	require.NoError(t, err)
 	defer rdb.Close()
 
 	ctx, parentSpan := testutil.CreateTestSpan(ctx, "test-list-parent")
@@ -188,9 +191,10 @@ func TestRedis_Pipeline(t *testing.T) {
 	collector := testutil.NewMockCollector()
 	defer collector.Shutdown(ctx)
 
-	rdb := redisagent.NewClient(&redis.Options{
+	rdb, err := redisagent.NewClient(&redis.Options{
 		Addr: endpoint,
 	})
+	require.NoError(t, err)
 	defer rdb.Close()
 
 	ctx, parentSpan := testutil.CreateTestSpan(ctx, "test-pipeline-parent")
@@ -222,9 +226,10 @@ func TestRedis_TTL(t *testing.T) {
 	collector := testutil.NewMockCollector()
 	defer collector.Shutdown(ctx)
 
-	rdb := redisagent.NewClient(&redis.Options{
+	rdb, err := redisagent.NewClient(&redis.Options{
 		Addr: endpoint,
 	})
+	require.NoError(t, err)
 	defer rdb.Close()
 
 	ctx, parentSpan := testutil.CreateTestSpan(ctx, "test-ttl-parent")
@@ -257,9 +262,10 @@ func TestRedis_Delete(t *testing.T) {
 	collector := testutil.NewMockCollector()
 	defer collector.Shutdown(ctx)
 
-	rdb := redisagent.NewClient(&redis.Options{
+	rdb, err := redisagent.NewClient(&redis.Options{
 		Addr: endpoint,
 	})
+	require.NoError(t, err)
 	defer rdb.Close()
 
 	ctx, parentSpan := testutil.CreateTestSpan(ctx, "test-delete-parent")
@@ -298,9 +304,10 @@ func TestRedis_KeyNotFound(t *testing.T) {
 	collector := testutil.NewMockCollector()
 	defer collector.Shutdown(ctx)
 
-	rdb := redisagent.NewClient(&redis.Options{
+	rdb, err := redisagent.NewClient(&redis.Options{
 		Addr: endpoint,
 	})
+	require.NoError(t, err)
 	defer rdb.Close()
 
 	ctx, parentSpan := testutil.CreateTestSpan(ctx, "test-notfound-parent")
@@ -327,9 +334,10 @@ func TestRedis_ContextPropagation(t *testing.T) {
 	collector := testutil.NewMockCollector()
 	defer collector.Shutdown(ctx)
 
-	rdb := redisagent.NewClient(&redis.Options{
+	rdb, err := redisagent.NewClient(&redis.Options{
 		Addr: endpoint,
 	})
+	require.NoError(t, err)
 	defer rdb.Close()
 
 	// Create parent span

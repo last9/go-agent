@@ -16,7 +16,7 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 - [Metrics Support](#-metrics-support) - Automatic • Custom • Runtime
 - [Configuration](#️-configuration)
 - [Requirements & Compatibility](#-requirements--compatibility)
-- [Testing](#-testing) - Local • CI/CD
+- [Testing](#-testing)
 - [SDK vs eBPF](#-sdk-vs-ebpf-full-comparison)
 
 ## ✨ Key Features
@@ -32,13 +32,20 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 ## 📋 Requirements & Compatibility
 
 ### Minimum Requirements
-- **Go Version**: 1.24 or later
+- **Go Version**: 1.22 or later (1.24+ recommended for full runtime metrics)
 - **Environment**: Works on Linux, macOS, Windows
 - **Docker**: Required only for integration tests
 
+### Go Version Feature Matrix
+| Go Version | Support Level | Runtime Metrics |
+|------------|---------------|-----------------|
+| **1.24+** | Full | Complete OTel runtime instrumentation (15+ metrics) |
+| **1.22-1.23** | Full | Basic runtime metrics (memory, goroutines, GC) |
+| **< 1.22** | Not supported | - |
+
 The agent provides comprehensive telemetry including:
 - **Full distributed tracing** across all instrumented frameworks
-- **Automatic runtime metrics** (15+ metrics: memory, GC, goroutines, CPU)
+- **Automatic runtime metrics** (varies by Go version, see above)
 - **Custom metrics** support for business-specific observability
 
 ### Supported Frameworks & Libraries
@@ -658,69 +665,18 @@ go test -v -tags=integration ./tests/integration/  # Integration tests
 docker-compose -f docker-compose.test.yml down -v
 ```
 
-### Continuous Integration
-
-GitHub Actions CI runs on every pull request and push to main.
-
-#### CI Pipeline
-The CI workflow (`.github/workflows/ci.yml`) includes:
-
-1. **Lint** (golangci-lint)
-   - Static code analysis
-   - Code quality checks
-   - Runs on Go 1.24
-
-2. **Unit Tests**
-   - Runs on Go 1.22, 1.23, 1.24
-   - Includes race detection (`-race`)
-   - Generates coverage reports
-   - Fast (no external services)
-
-3. **Integration Tests**
-   - Runs on Go 1.23, 1.24
-   - Tests with real Postgres, MySQL, Redis, Kafka
-   - Verifies instrumentation works end-to-end
-   - Timeout: 15 minutes
-
-4. **Build**
-   - Verifies all packages compile
-   - Runs after tests pass
-
-#### Running CI Locally
-To replicate CI behavior locally:
-
-```bash
-# Run linter (same as CI)
-golangci-lint run --timeout=5m
-
-# Run unit tests with race detection (same as CI)
-go test -v -race -short -coverprofile=coverage.out ./...
-
-# Run integration tests (same as CI, requires services)
-docker-compose -f docker-compose.test.yml up -d
-go test -v -race -tags=integration -timeout=10m ./tests/integration/...
-docker-compose -f docker-compose.test.yml down -v
-```
-
-#### Test Coverage
-- Unit tests: Fast feedback on code changes
-- Integration tests: Verify real-world instrumentation
-- Coverage reports uploaded to Codecov automatically
-
-See the [CI configuration](.github/workflows/ci.yml) for full details.
-
 ## 🏗️ Build Tags and Go Version Support
 
-The go-agent uses Go build tags to provide optimal functionality across different Go versions.
+The go-agent uses Go build tags to provide optimal functionality across different Go versions. See [Go Version Feature Matrix](#go-version-feature-matrix) for details on what each version supports.
 
-### Automatic Version Detection
-The agent automatically detects your Go version at compile time and includes the appropriate features:
+### How It Works
+The agent automatically detects your Go version at compile time:
 
 ```bash
-# Go 1.24+ users get full runtime metrics automatically
+# Go 1.24+ gets full OTel runtime instrumentation
 go build  # Uses agent_runtime_go124.go
 
-# Go 1.22/1.23 users get basic runtime metrics
+# Go 1.22-1.23 gets basic runtime metrics
 go build  # Uses agent_runtime_legacy.go
 ```
 
@@ -728,22 +684,6 @@ go build  # Uses agent_runtime_legacy.go
 - ✅ Works transparently based on your Go version
 - ✅ No environment variables or flags required
 - ✅ Compile-time optimization (zero runtime overhead)
-- ✅ Future-proof pattern for new OTel dependencies
-
-### For Library Maintainers
-If you're building a library that depends on go-agent:
-- Specify your minimum Go version in your go.mod
-- The agent will automatically adapt to your Go version
-- Users on different Go versions can use your library
-
-### Testing Across Versions
-```bash
-# Test with Go 1.22
-go1.22 test ./...
-
-# Test with Go 1.24
-go1.24 test ./...
-```
 
 ## 🤝 Contributing
 
