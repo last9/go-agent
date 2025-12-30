@@ -33,7 +33,11 @@ type Config struct {
 	ResourceAttributes []attribute.KeyValue
 }
 
-// Load reads configuration from environment variables
+// Load reads configuration from environment variables.
+//
+// Note: If OTEL_EXPORTER_OTLP_ENDPOINT is not set, the agent will start but
+// telemetry data will not be exported. This is useful for local development
+// or when using a custom exporter configuration.
 func Load() *Config {
 	cfg := &Config{
 		ServiceName:    getEnvOrDefault("OTEL_SERVICE_NAME", "unknown-service"),
@@ -51,7 +55,8 @@ func Load() *Config {
 
 	// Validate configuration
 	if cfg.Endpoint == "" {
-		log.Println("[Last9 Agent] Warning: OTEL_EXPORTER_OTLP_ENDPOINT not set")
+		log.Println("[Last9 Agent] Warning: OTEL_EXPORTER_OTLP_ENDPOINT not set - telemetry will not be exported")
+		log.Println("[Last9 Agent] Set this environment variable to export telemetry data")
 	}
 
 	return cfg

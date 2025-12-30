@@ -15,8 +15,8 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 - [HTTP Client](#-http-client-support)
 - [Metrics Support](#-metrics-support) - Automatic • Custom • Runtime
 - [Configuration](#️-configuration)
-- [Examples](#-complete-example)
-- [Testing](#-testing) - Running Tests • CI/CD
+- [Requirements & Compatibility](#-requirements--compatibility)
+- [Testing](#-testing)
 - [SDK vs eBPF](#-sdk-vs-ebpf-full-comparison)
 
 ## ✨ Key Features
@@ -29,6 +29,44 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 - ⚙️ **Environment-based config** - Uses standard OpenTelemetry environment variables (no hardcoded config)
 - 🔍 **Complete observability** - Full distributed tracing + metrics across all layers (HTTP → gRPC → DB → External APIs)
 
+## 📋 Requirements & Compatibility
+
+### Minimum Requirements
+- **Go Version**: 1.22 or later (1.24+ recommended for full runtime metrics)
+- **Environment**: Works on Linux, macOS, Windows
+- **Docker**: Required only for integration tests
+
+### Go Version Feature Matrix
+| Go Version | Support Level | Runtime Metrics |
+|------------|---------------|-----------------|
+| **1.24+** | Full | Complete OTel runtime instrumentation (15+ metrics) |
+| **1.22-1.23** | Full | Basic runtime metrics (memory, goroutines, GC) |
+| **< 1.22** | Not supported | - |
+
+The agent provides comprehensive telemetry including:
+- **Full distributed tracing** across all instrumented frameworks
+- **Automatic runtime metrics** (varies by Go version, see above)
+- **Custom metrics** support for business-specific observability
+
+### Supported Frameworks & Libraries
+| Category | Supported | Version |
+|----------|-----------|---------|
+| **Web Frameworks** | Gin, Chi, Echo, Gorilla Mux, gRPC-Gateway | Latest stable |
+| **Databases** | PostgreSQL, MySQL, SQLite | Any version |
+| **Message Queues** | Kafka (IBM Sarama) | 2.6.0+ |
+| **Caching** | Redis (go-redis) | v9 |
+| **OpenTelemetry** | OTLP/HTTP (traces), OTLP/gRPC (metrics) | 1.39.0 |
+
+### OpenTelemetry Specifications
+This agent implements:
+- **Traces**: OpenTelemetry Tracing API 1.39.0
+- **Metrics**: OpenTelemetry Metrics API 1.39.0
+- **Semantic Conventions**: v1.26.0
+- **OTLP Protocol**: HTTP (traces), gRPC (metrics)
+
+See [OpenTelemetry Go Documentation](https://opentelemetry.io/docs/languages/go/) for specification details.
+
+---
 
 The Last9 Go Agent provides:
 - **Single line initialization**: `agent.Start()`
@@ -626,6 +664,26 @@ go test -v -tags=integration ./tests/integration/  # Integration tests
 # 4. Stop services
 docker-compose -f docker-compose.test.yml down -v
 ```
+
+## 🏗️ Build Tags and Go Version Support
+
+The go-agent uses Go build tags to provide optimal functionality across different Go versions. See [Go Version Feature Matrix](#go-version-feature-matrix) for details on what each version supports.
+
+### How It Works
+The agent automatically detects your Go version at compile time:
+
+```bash
+# Go 1.24+ gets full OTel runtime instrumentation
+go build  # Uses agent_runtime_go124.go
+
+# Go 1.22-1.23 gets basic runtime metrics
+go build  # Uses agent_runtime_legacy.go
+```
+
+### No Configuration Needed
+- ✅ Works transparently based on your Go version
+- ✅ No environment variables or flags required
+- ✅ Compile-time optimization (zero runtime overhead)
 
 ## 🤝 Contributing
 

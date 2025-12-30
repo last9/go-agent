@@ -11,41 +11,53 @@ import (
 )
 
 // NewClient creates a new Redis client with Last9 instrumentation.
-// It's a drop-in replacement for redis.NewClient() with automatic tracing.
+// Returns both the client and any instrumentation error.
+// The client is always returned and usable even if instrumentation fails.
 //
 // Example usage:
 //
-//	rdb := redis.NewClient(&redis.Options{
+//	rdb, err := redis.NewClient(&redis.Options{
 //	    Addr:     "localhost:6379",
 //	    Password: "", // no password
 //	    DB:       0,  // default DB
 //	})
+//	if err != nil {
+//	    log.Printf("Warning: Redis instrumentation failed: %v", err)
+//	    // Client is still usable, just without instrumentation
+//	}
 //	defer rdb.Close()
 //
-//	// Use normally - all commands are automatically traced
-//	err := rdb.Set(ctx, "key", "value", 0).Err()
-func NewClient(opts *redis.Options) *redis.Client {
+//	// Use normally - commands are traced if instrumentation succeeded
+//	err = rdb.Set(ctx, "key", "value", 0).Err()
+func NewClient(opts *redis.Options) (*redis.Client, error) {
 	client := redis.NewClient(opts)
-	if err := setupInstrumentation(client); err != nil {
-		log.Printf("[Last9 Agent] Warning: Failed to instrument Redis client: %v", err)
+	err := setupInstrumentation(client)
+	if err != nil {
+		log.Printf("[Last9 Agent] Warning: Failed to instrument Redis client: %v (client still usable)", err)
 	}
-	return client
+	return client, err
 }
 
 // NewClusterClient creates a new Redis cluster client with Last9 instrumentation.
+// Returns both the client and any instrumentation error.
+// The client is always returned and usable even if instrumentation fails.
 //
 // Example:
 //
-//	rdb := redis.NewClusterClient(&redis.ClusterOptions{
+//	rdb, err := redis.NewClusterClient(&redis.ClusterOptions{
 //	    Addrs: []string{":7000", ":7001", ":7002"},
 //	})
+//	if err != nil {
+//	    log.Printf("Warning: Redis cluster instrumentation failed: %v", err)
+//	}
 //	defer rdb.Close()
-func NewClusterClient(opts *redis.ClusterOptions) *redis.ClusterClient {
+func NewClusterClient(opts *redis.ClusterOptions) (*redis.ClusterClient, error) {
 	client := redis.NewClusterClient(opts)
-	if err := setupClusterInstrumentation(client); err != nil {
-		log.Printf("[Last9 Agent] Warning: Failed to instrument Redis cluster client: %v", err)
+	err := setupClusterInstrumentation(client)
+	if err != nil {
+		log.Printf("[Last9 Agent] Warning: Failed to instrument Redis cluster client: %v (client still usable)", err)
 	}
-	return client
+	return client, err
 }
 
 // Instrument adds Last9 instrumentation to an existing Redis client.

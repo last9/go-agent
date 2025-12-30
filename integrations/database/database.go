@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"go.nhat.io/otelsql"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.25.0"
 )
 
 // Config holds database configuration
@@ -52,6 +52,14 @@ type Config struct {
 //	}
 //	defer db.Close()
 func Open(cfg Config) (*sql.DB, error) {
+	// Validate inputs
+	if cfg.DriverName == "" {
+		return nil, fmt.Errorf("database.Open: DriverName is required")
+	}
+	if cfg.DSN == "" {
+		return nil, fmt.Errorf("database.Open: DSN is required")
+	}
+
 	// Default driver options
 	opts := []otelsql.DriverOption{
 		otelsql.AllowRoot(),

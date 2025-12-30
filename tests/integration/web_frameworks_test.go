@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,22 +36,16 @@ func TestGin_Instrumentation(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.Shutdown()
 
-	collector := testutil.NewMockCollector()
-	defer collector.Shutdown(t.Context())
-
-	// Create instrumented Gin router
-	r := ginagent.New()
-	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{"message": "pong"})
-	})
-	r.GET("/users/:id", func(c *gin.Context) {
-		id := c.Param("id")
-		c.JSON(200, gin.H{"id": id})
-	})
-
 	// Test simple endpoint
 	t.Run("simple endpoint", func(t *testing.T) {
-		collector.Reset()
+		collector := testutil.NewMockCollector()
+		defer collector.Shutdown(context.Background())
+
+		// Create instrumented Gin router AFTER MockCollector
+		r := ginagent.New()
+		r.GET("/ping", func(c *gin.Context) {
+			c.JSON(200, gin.H{"message": "pong"})
+		})
 
 		req := httptest.NewRequest("GET", "/ping", nil)
 		w := httptest.NewRecorder()
@@ -72,7 +67,15 @@ func TestGin_Instrumentation(t *testing.T) {
 
 	// Test parameterized endpoint
 	t.Run("parameterized endpoint", func(t *testing.T) {
-		collector.Reset()
+		collector := testutil.NewMockCollector()
+		defer collector.Shutdown(context.Background())
+
+		// Create instrumented Gin router AFTER MockCollector
+		r := ginagent.New()
+		r.GET("/users/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			c.JSON(200, gin.H{"id": id})
+		})
 
 		req := httptest.NewRequest("GET", "/users/123", nil)
 		w := httptest.NewRecorder()
@@ -95,7 +98,7 @@ func TestGin_Default(t *testing.T) {
 	defer agent.Shutdown()
 
 	collector := testutil.NewMockCollector()
-	defer collector.Shutdown(t.Context())
+	defer collector.Shutdown(context.Background())
 
 	r := ginagent.Default()
 	r.GET("/test", func(c *gin.Context) {
@@ -121,7 +124,7 @@ func TestGin_Middleware(t *testing.T) {
 	defer agent.Shutdown()
 
 	collector := testutil.NewMockCollector()
-	defer collector.Shutdown(t.Context())
+	defer collector.Shutdown(context.Background())
 
 	r := gin.New()
 	r.Use(ginagent.Middleware())
@@ -147,26 +150,19 @@ func TestChi_Instrumentation(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.Shutdown()
 
-	collector := testutil.NewMockCollector()
-	defer collector.Shutdown(t.Context())
-
-	// Create standard Chi router and define routes
-	r := chi.NewRouter()
-	r.Get("/ping", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte(`{"message":"pong"}`))
-	})
-	r.Get("/users/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte(`{"id":"` + id + `"}`))
-	})
-
-	// Apply instrumentation AFTER routes are defined (Chi requirement)
-	handler := chiagent.Use(r)
-
 	t.Run("simple endpoint", func(t *testing.T) {
-		collector.Reset()
+		collector := testutil.NewMockCollector()
+		defer collector.Shutdown(context.Background())
+
+		// Create standard Chi router and define routes
+		r := chi.NewRouter()
+		r.Get("/ping", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"message":"pong"}`))
+		})
+
+		// Apply instrumentation AFTER routes are defined (Chi requirement)
+		handler := chiagent.Use(r)
 
 		req := httptest.NewRequest("GET", "/ping", nil)
 		w := httptest.NewRecorder()
@@ -182,7 +178,19 @@ func TestChi_Instrumentation(t *testing.T) {
 	})
 
 	t.Run("parameterized endpoint", func(t *testing.T) {
-		collector.Reset()
+		collector := testutil.NewMockCollector()
+		defer collector.Shutdown(context.Background())
+
+		// Create standard Chi router and define routes
+		r := chi.NewRouter()
+		r.Get("/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+			id := chi.URLParam(r, "id")
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"id":"` + id + `"}`))
+		})
+
+		// Apply instrumentation AFTER routes are defined (Chi requirement)
+		handler := chiagent.Use(r)
 
 		req := httptest.NewRequest("GET", "/users/456", nil)
 		w := httptest.NewRecorder()
@@ -205,7 +213,7 @@ func TestChi_Use(t *testing.T) {
 	defer agent.Shutdown()
 
 	collector := testutil.NewMockCollector()
-	defer collector.Shutdown(t.Context())
+	defer collector.Shutdown(context.Background())
 
 	r := chi.NewRouter()
 	r.Get("/test", func(w http.ResponseWriter, r *http.Request) {
@@ -234,21 +242,15 @@ func TestEcho_Instrumentation(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.Shutdown()
 
-	collector := testutil.NewMockCollector()
-	defer collector.Shutdown(t.Context())
-
-	// Create instrumented Echo instance
-	e := echoagent.New()
-	e.GET("/ping", func(c echo.Context) error {
-		return c.JSON(200, map[string]string{"message": "pong"})
-	})
-	e.GET("/users/:id", func(c echo.Context) error {
-		id := c.Param("id")
-		return c.JSON(200, map[string]string{"id": id})
-	})
-
 	t.Run("simple endpoint", func(t *testing.T) {
-		collector.Reset()
+		collector := testutil.NewMockCollector()
+		defer collector.Shutdown(context.Background())
+
+		// Create instrumented Echo instance
+		e := echoagent.New()
+		e.GET("/ping", func(c echo.Context) error {
+			return c.JSON(200, map[string]string{"message": "pong"})
+		})
 
 		req := httptest.NewRequest("GET", "/ping", nil)
 		w := httptest.NewRecorder()
@@ -264,7 +266,15 @@ func TestEcho_Instrumentation(t *testing.T) {
 	})
 
 	t.Run("parameterized endpoint", func(t *testing.T) {
-		collector.Reset()
+		collector := testutil.NewMockCollector()
+		defer collector.Shutdown(context.Background())
+
+		// Create instrumented Echo instance
+		e := echoagent.New()
+		e.GET("/users/:id", func(c echo.Context) error {
+			id := c.Param("id")
+			return c.JSON(200, map[string]string{"id": id})
+		})
 
 		req := httptest.NewRequest("GET", "/users/789", nil)
 		w := httptest.NewRecorder()
@@ -286,24 +296,16 @@ func TestGorilla_Instrumentation(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.Shutdown()
 
-	collector := testutil.NewMockCollector()
-	defer collector.Shutdown(t.Context())
-
-	// Create instrumented Gorilla router
-	r := gorillaagent.NewRouter()
-	r.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte(`{"message":"pong"}`))
-	}).Methods("GET")
-	r.HandleFunc("/users/{id}", func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		id := vars["id"]
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte(`{"id":"` + id + `"}`))
-	}).Methods("GET")
-
 	t.Run("simple endpoint", func(t *testing.T) {
-		collector.Reset()
+		collector := testutil.NewMockCollector()
+		defer collector.Shutdown(context.Background())
+
+		// Create instrumented Gorilla router
+		r := gorillaagent.NewRouter()
+		r.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"message":"pong"}`))
+		}).Methods("GET")
 
 		req := httptest.NewRequest("GET", "/ping", nil)
 		w := httptest.NewRecorder()
@@ -319,7 +321,17 @@ func TestGorilla_Instrumentation(t *testing.T) {
 	})
 
 	t.Run("parameterized endpoint", func(t *testing.T) {
-		collector.Reset()
+		collector := testutil.NewMockCollector()
+		defer collector.Shutdown(context.Background())
+
+		// Create instrumented Gorilla router
+		r := gorillaagent.NewRouter()
+		r.HandleFunc("/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+			vars := mux.Vars(r)
+			id := vars["id"]
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"id":"` + id + `"}`))
+		}).Methods("GET")
 
 		req := httptest.NewRequest("GET", "/users/101", nil)
 		w := httptest.NewRecorder()
@@ -342,7 +354,7 @@ func TestGorilla_Middleware(t *testing.T) {
 	defer agent.Shutdown()
 
 	collector := testutil.NewMockCollector()
-	defer collector.Shutdown(t.Context())
+	defer collector.Shutdown(context.Background())
 
 	r := mux.NewRouter()
 	r.Use(gorillaagent.Middleware())
@@ -369,19 +381,14 @@ func TestWebFrameworks_ErrorHandling(t *testing.T) {
 	require.NoError(t, err)
 	defer agent.Shutdown()
 
-	collector := testutil.NewMockCollector()
-	defer collector.Shutdown(t.Context())
-
-	r := ginagent.New()
-	r.GET("/error", func(c *gin.Context) {
-		c.JSON(500, gin.H{"error": "internal error"})
-	})
-	r.GET("/not-found", func(c *gin.Context) {
-		c.JSON(404, gin.H{"error": "not found"})
-	})
-
 	t.Run("500 error", func(t *testing.T) {
-		collector.Reset()
+		collector := testutil.NewMockCollector()
+		defer collector.Shutdown(context.Background())
+
+		r := ginagent.New()
+		r.GET("/error", func(c *gin.Context) {
+			c.JSON(500, gin.H{"error": "internal error"})
+		})
 
 		req := httptest.NewRequest("GET", "/error", nil)
 		w := httptest.NewRecorder()
@@ -396,7 +403,13 @@ func TestWebFrameworks_ErrorHandling(t *testing.T) {
 	})
 
 	t.Run("404 error", func(t *testing.T) {
-		collector.Reset()
+		collector := testutil.NewMockCollector()
+		defer collector.Shutdown(context.Background())
+
+		r := ginagent.New()
+		r.GET("/not-found", func(c *gin.Context) {
+			c.JSON(404, gin.H{"error": "not found"})
+		})
 
 		req := httptest.NewRequest("GET", "/not-found", nil)
 		w := httptest.NewRecorder()
@@ -418,7 +431,7 @@ func TestWebFrameworks_ContextPropagation(t *testing.T) {
 	defer agent.Shutdown()
 
 	collector := testutil.NewMockCollector()
-	defer collector.Shutdown(t.Context())
+	defer collector.Shutdown(context.Background())
 
 	var capturedTraceID string
 
