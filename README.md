@@ -8,7 +8,7 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 
 - [Key Features](#-key-features)
 - [Quick Start](#-sdk-quick-start-this-repo)
-- [Framework Support](#-framework-support) - Gin • Chi • Echo • Gorilla • gRPC-Gateway
+- [Framework Support](#-framework-support) - net/http • Gin • Chi • Echo • Gorilla • gRPC-Gateway
 - [Database Support](#️-database-support) - PostgreSQL • MySQL • SQLite
 - [Redis Support](#-redis-support)
 - [Kafka Support](#-kafka-support) - Producers • Consumers
@@ -51,7 +51,7 @@ The agent provides comprehensive telemetry including:
 ### Supported Frameworks & Libraries
 | Category | Supported | Version |
 |----------|-----------|---------|
-| **Web Frameworks** | Gin, Chi, Echo, Gorilla Mux, gRPC-Gateway | Latest stable |
+| **Web Frameworks** | net/http, Gin, Chi, Echo, Gorilla Mux, gRPC-Gateway | Latest stable |
 | **Databases** | PostgreSQL, MySQL, SQLite | Any version |
 | **Message Queues** | Kafka (IBM Sarama) | 2.6.0+ |
 | **Caching** | Redis (go-redis) | v9 |
@@ -123,6 +123,39 @@ export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=local,team=backend"
 ```
 
 ## 📚 Framework Support
+
+### net/http (Standard Library)
+
+For applications using Go's standard `net/http` package without any framework:
+
+```go
+import nethttpagent "github.com/last9/go-agent/instrumentation/nethttp"
+
+func main() {
+    agent.Start()
+    defer agent.Shutdown()
+
+    // Option 1: Use instrumented ServeMux (recommended)
+    mux := nethttpagent.NewServeMux()
+    mux.HandleFunc("/users", usersHandler)
+    mux.HandleFunc("/orders", ordersHandler)
+    http.ListenAndServe(":8080", mux)
+
+    // Option 2: Wrap existing handler/mux
+    stdMux := http.NewServeMux()
+    stdMux.HandleFunc("/api", apiHandler)
+    http.ListenAndServe(":8080", nethttpagent.WrapHandler(stdMux))
+
+    // Option 3: Wrap individual handlers
+    http.Handle("/ping", nethttpagent.Handler(pingHandler, "/ping"))
+    http.ListenAndServe(":8080", nil)
+
+    // Option 4: Drop-in replacement for ListenAndServe
+    mux := http.NewServeMux()
+    mux.HandleFunc("/data", dataHandler)
+    nethttpagent.ListenAndServe(":8080", mux)  // Automatically wraps handler
+}
+```
 
 ### Gin
 
