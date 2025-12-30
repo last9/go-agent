@@ -2,9 +2,14 @@
 package http
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptrace"
+	"strings"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -60,6 +65,9 @@ func NewClient(client *http.Client) *http.Client {
 //
 //	resp, err := http.Get(ctx, "https://api.example.com/data")
 func Get(ctx context.Context, url string) (*http.Response, error) {
+	if url == "" {
+		return nil, fmt.Errorf("http.Get: url is required")
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -68,9 +76,52 @@ func Get(ctx context.Context, url string) (*http.Response, error) {
 }
 
 // Post is a convenience function for making instrumented POST requests.
+// It supports multiple body types: io.Reader, []byte, string, and structs (JSON encoded).
+//
+// Example with JSON:
+//
+//	type User struct { Name string `json:"name"` }
+//	user := User{Name: "Alice"}
+//	resp, err := http.Post(ctx, "https://api.example.com/users", "application/json", user)
+//
+// Example with raw data:
+//
+//	resp, err := http.Post(ctx, "https://api.example.com/data", "text/plain", []byte("hello"))
 func Post(ctx context.Context, url, contentType string, body interface{}) (*http.Response, error) {
-	// This is a simplified version - you'd want to handle body encoding properly
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	// Validate inputs
+	if url == "" {
+		return nil, fmt.Errorf("http.Post: url is required")
+	}
+	if contentType == "" {
+		return nil, fmt.Errorf("http.Post: contentType is required")
+	}
+
+	var bodyReader io.Reader
+
+	// Handle different body types
+	switch v := body.(type) {
+	case io.Reader:
+		bodyReader = v
+	case []byte:
+		bodyReader = bytes.NewReader(v)
+	case string:
+		bodyReader = strings.NewReader(v)
+	case nil:
+		bodyReader = nil
+	default:
+		// For structs/maps, encode as JSON if content type is JSON
+		if strings.Contains(contentType, "application/json") {
+			jsonData, err := json.Marshal(v)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal body to JSON: %w", err)
+			}
+			bodyReader = bytes.NewReader(jsonData)
+		} else {
+			return nil, fmt.Errorf("unsupported body type %T for content-type %s", body, contentType)
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bodyReader)
 	if err != nil {
 		return nil, err
 	}

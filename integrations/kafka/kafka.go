@@ -19,12 +19,19 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.25.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
 const (
 	instrumentationName = "github.com/last9/go-agent/integrations/kafka"
+)
+
+// Attribute keys not available in semconv v1.25.0
+var (
+	// messagingOperationNameKey is the attribute key for messaging operation name
+	// This was added in later semconv versions but we define it here for Go 1.22 compatibility
+	messagingOperationNameKey = attribute.Key("messaging.operation.name")
 )
 
 // ProducerConfig holds configuration for creating an instrumented Kafka producer.
@@ -83,6 +90,16 @@ type SyncProducer struct {
 //	    Value: sarama.StringEncoder("Hello Kafka"),
 //	})
 func NewSyncProducer(cfg ProducerConfig) (*SyncProducer, error) {
+	// Validate inputs
+	if len(cfg.Brokers) == 0 {
+		return nil, fmt.Errorf("kafka.NewSyncProducer: Brokers list is required")
+	}
+	for i, broker := range cfg.Brokers {
+		if broker == "" {
+			return nil, fmt.Errorf("kafka.NewSyncProducer: Broker at index %d is empty", i)
+		}
+	}
+
 	if !agent.IsInitialized() {
 		if err := agent.Start(); err != nil {
 			return nil, fmt.Errorf("failed to initialize Last9 agent: %w", err)
@@ -164,7 +181,7 @@ func (p *SyncProducer) SendMessage(ctx context.Context, msg *sarama.ProducerMess
 		trace.WithAttributes(
 			semconv.MessagingSystemKey.String("kafka"),
 			semconv.MessagingDestinationNameKey.String(msg.Topic),
-			semconv.MessagingOperationNameKey.String("send"),
+			messagingOperationNameKey.String("send"),
 		),
 	)
 	defer span.End()
@@ -229,7 +246,7 @@ func (p *SyncProducer) SendMessages(ctx context.Context, msgs []*sarama.Producer
 		trace.WithSpanKind(trace.SpanKindProducer),
 		trace.WithAttributes(
 			semconv.MessagingSystemKey.String("kafka"),
-			semconv.MessagingOperationNameKey.String("send"),
+			messagingOperationNameKey.String("send"),
 			semconv.MessagingBatchMessageCountKey.Int(len(msgs)),
 		),
 	)
@@ -270,32 +287,51 @@ type ConsumerGroupHandler struct {
 }
 
 // tracedSession wraps ConsumerGroupSession to provide per-message trace context.
-// When the user calls Context(), they get the trace context for the current message.
+// It stores trace context for each message using partition:offset as a unique key,
+// preventing race conditions during concurrent message processing.
 type tracedSession struct {
 	sarama.ConsumerGroupSession
-	currentCtx context.Context
-	mu         sync.RWMutex
+	messageContexts map[string]context.Context // Key: "partition:offset"
+	mu              sync.RWMutex
 }
 
-// Context returns the trace-enriched context for the current message.
+// Context returns the session's base context.
+// For per-message context, use GetMessageContext().
 func (s *tracedSession) Context() context.Context {
+	return s.ConsumerGroupSession.Context()
+}
+
+// GetMessageContext retrieves the trace context for a specific message.
+// Returns the base session context if no message-specific context exists.
+func (s *tracedSession) GetMessageContext(msg *sarama.ConsumerMessage) context.Context {
+	key := fmt.Sprintf("%d:%d", msg.Partition, msg.Offset)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.currentCtx != nil {
-		return s.currentCtx
+	if ctx, ok := s.messageContexts[key]; ok {
+		return ctx
 	}
 	return s.ConsumerGroupSession.Context()
 }
 
-// setContext updates the current message context.
-func (s *tracedSession) setContext(ctx context.Context) {
+// setMessageContext stores the trace context for a specific message.
+func (s *tracedSession) setMessageContext(msg *sarama.ConsumerMessage, ctx context.Context) {
+	key := fmt.Sprintf("%d:%d", msg.Partition, msg.Offset)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.currentCtx = ctx
+	s.messageContexts[key] = ctx
+}
+
+// clearMessageContext removes the context when message processing is complete.
+func (s *tracedSession) clearMessageContext(msg *sarama.ConsumerMessage) {
+	key := fmt.Sprintf("%d:%d", msg.Partition, msg.Offset)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.messageContexts, key)
 }
 
 // tracedClaim wraps ConsumerGroupClaim to provide per-message tracing.
 // It coordinates with tracedSession to update the context for each message.
+// Tracks active spans to ensure proper cleanup and span lifecycle management.
 type tracedClaim struct {
 	sarama.ConsumerGroupClaim
 	tracedSession    *tracedSession
@@ -304,25 +340,70 @@ type tracedClaim struct {
 	processDuration  metric.Float64Histogram
 	messagesChan     chan *sarama.ConsumerMessage
 	done             chan struct{}
+
+	// Track active spans for cleanup
+	activeSpans map[string]trace.Span // Key: "partition:offset"
+	spansMu     sync.Mutex
+}
+
+// endPreviousSpan ends the span for a previous message when a new message arrives.
+// This ensures span duration reflects actual processing time.
+func (c *tracedClaim) endPreviousSpan(msg *sarama.ConsumerMessage) {
+	key := fmt.Sprintf("%d:%d", msg.Partition, msg.Offset)
+	c.spansMu.Lock()
+	defer c.spansMu.Unlock()
+	if span, ok := c.activeSpans[key]; ok {
+		span.End()
+		delete(c.activeSpans, key)
+	}
+}
+
+// storeSpan stores a span for later cleanup.
+func (c *tracedClaim) storeSpan(msg *sarama.ConsumerMessage, span trace.Span) {
+	key := fmt.Sprintf("%d:%d", msg.Partition, msg.Offset)
+	c.spansMu.Lock()
+	defer c.spansMu.Unlock()
+	c.activeSpans[key] = span
+}
+
+// endAllSpans ends all active spans when the claim is closed.
+func (c *tracedClaim) endAllSpans() {
+	c.spansMu.Lock()
+	defer c.spansMu.Unlock()
+	for _, span := range c.activeSpans {
+		span.End()
+	}
+	c.activeSpans = make(map[string]trace.Span)
 }
 
 // Messages returns a channel of traced messages.
 // Each message read from this channel will have its trace context extracted
-// and made available via the session's Context() method.
+// and made available via the session's GetMessageContext() method.
 func (c *tracedClaim) Messages() <-chan *sarama.ConsumerMessage {
 	return c.messagesChan
 }
 
 // startTracingPipeline starts the background goroutine that traces messages.
+// Spans are ended when the next message arrives, ensuring span duration reflects
+// actual processing time.
 func (c *tracedClaim) startTracingPipeline() {
 	go func() {
 		defer close(c.messagesChan)
+		defer c.endAllSpans()
+
+		var previousMsg *sarama.ConsumerMessage
 
 		for msg := range c.ConsumerGroupClaim.Messages() {
 			select {
 			case <-c.done:
 				return
 			default:
+			}
+
+			// End span for previous message when new message arrives
+			if previousMsg != nil {
+				c.endPreviousSpan(previousMsg)
+				c.tracedSession.clearMessageContext(previousMsg)
 			}
 
 			// Extract trace context from message headers
@@ -334,14 +415,15 @@ func (c *tracedClaim) startTracingPipeline() {
 				trace.WithAttributes(
 					semconv.MessagingSystemKey.String("kafka"),
 					semconv.MessagingDestinationNameKey.String(msg.Topic),
-					semconv.MessagingOperationNameKey.String("receive"),
+					messagingOperationNameKey.String("receive"),
 					attribute.Int("messaging.kafka.partition", int(msg.Partition)),
 					attribute.Int64("messaging.kafka.offset", msg.Offset),
 				),
 			)
 
-			// Update the traced session's context so user can access it via session.Context()
-			c.tracedSession.setContext(ctx)
+			// Store span and context for this message
+			c.storeSpan(msg, span)
+			c.tracedSession.setMessageContext(msg, ctx)
 
 			// Record metrics
 			metricAttrs := []attribute.KeyValue{
@@ -352,18 +434,14 @@ func (c *tracedClaim) startTracingPipeline() {
 				c.messagesReceived.Add(ctx, 1, metric.WithAttributes(metricAttrs...))
 			}
 
-			// Pass message to consumer - span stays open while user processes it
+			// Pass message to consumer - span stays open until next message arrives
 			select {
 			case c.messagesChan <- msg:
+				previousMsg = msg
 			case <-c.done:
 				span.End()
 				return
 			}
-
-			// End span after message is delivered
-			// Note: In a more advanced implementation, we could end the span when
-			// the next message is requested or when MarkMessage is called
-			span.End()
 		}
 	}()
 }
@@ -441,11 +519,12 @@ func (h *ConsumerGroupHandler) Cleanup(session sarama.ConsumerGroupSession) erro
 
 // ConsumeClaim processes messages from a topic partition with automatic tracing and metrics.
 // It wraps both the session and claim to provide traced messages to the user's handler.
-// The wrapped session's Context() method returns the trace context for the current message.
+// The wrapped session's GetMessageContext() method returns the trace context for each message.
 func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	// Create a traced session that provides per-message trace context
 	ts := &tracedSession{
 		ConsumerGroupSession: session,
+		messageContexts:      make(map[string]context.Context),
 	}
 
 	// Create a traced claim that wraps the original claim
@@ -457,6 +536,7 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 		processDuration:    h.processDuration,
 		messagesChan:       make(chan *sarama.ConsumerMessage),
 		done:               make(chan struct{}),
+		activeSpans:        make(map[string]trace.Span),
 	}
 
 	// Start the tracing pipeline
@@ -499,6 +579,19 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 //	handler := kafka.WrapConsumerGroupHandler(&MyHandler{})
 //	consumer.Consume(ctx, []string{"my-topic"}, handler)
 func NewConsumerGroup(cfg ConsumerConfig) (sarama.ConsumerGroup, error) {
+	// Validate inputs
+	if len(cfg.Brokers) == 0 {
+		return nil, fmt.Errorf("kafka.NewConsumerGroup: Brokers list is required")
+	}
+	if cfg.GroupID == "" {
+		return nil, fmt.Errorf("kafka.NewConsumerGroup: GroupID is required")
+	}
+	for i, broker := range cfg.Brokers {
+		if broker == "" {
+			return nil, fmt.Errorf("kafka.NewConsumerGroup: Broker at index %d is empty", i)
+		}
+	}
+
 	if !agent.IsInitialized() {
 		if err := agent.Start(); err != nil {
 			return nil, fmt.Errorf("failed to initialize Last9 agent: %w", err)

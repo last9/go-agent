@@ -25,9 +25,8 @@ func setupRedisTest(t *testing.T) (*tcredis.RedisContainer, string, context.Cont
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 
 	// Start Redis container
-	redisContainer, err := tcredis.Run(ctx,
-		"redis:7-alpine",
-		testcontainers.WithWaitStrategy(nil), // Uses default ready check
+	redisContainer, err := tcredis.RunContainer(ctx,
+		testcontainers.WithImage("redis:7-alpine"),
 	)
 	require.NoError(t, err, "failed to start Redis container")
 

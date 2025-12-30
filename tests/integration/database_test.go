@@ -26,8 +26,8 @@ func setupPostgresTest(t *testing.T) (*postgres.PostgresContainer, string, conte
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 
 	// Start PostgreSQL container
-	pgContainer, err := postgres.Run(ctx,
-		"postgres:15-alpine",
+	pgContainer, err := postgres.RunContainer(ctx,
+		testcontainers.WithImage("postgres:15-alpine"),
 		postgres.WithDatabase("testdb"),
 		postgres.WithUsername("testuser"),
 		postgres.WithPassword("testpass"),

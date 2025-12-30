@@ -4,7 +4,7 @@ package metrics
 
 import (
 	"context"
-	"log"
+	"fmt"
 
 	"github.com/last9/go-agent"
 	"go.opentelemetry.io/otel"
@@ -19,20 +19,24 @@ type Counter struct {
 }
 
 // NewCounter creates a new counter metric.
+// Returns an error if the agent cannot be initialized or the counter cannot be created.
 //
 // Example:
 //
-//	requestCounter := metrics.NewCounter(
+//	requestCounter, err := metrics.NewCounter(
 //	    "http.requests",
 //	    "Total number of HTTP requests",
 //	    "{request}",
 //	)
+//	if err != nil {
+//	    log.Printf("Failed to create counter: %v", err)
+//	    return err
+//	}
 //	requestCounter.Add(ctx, 1, attribute.String("method", "GET"))
-func NewCounter(name, description, unit string) *Counter {
+func NewCounter(name, description, unit string) (*Counter, error) {
 	if !agent.IsInitialized() {
 		if err := agent.Start(); err != nil {
-			log.Printf("[Last9 Agent] Warning: Failed to auto-start agent: %v", err)
-			return &Counter{}
+			return nil, fmt.Errorf("failed to initialize agent: %w", err)
 		}
 	}
 
@@ -43,11 +47,10 @@ func NewCounter(name, description, unit string) *Counter {
 		metric.WithUnit(unit),
 	)
 	if err != nil {
-		log.Printf("[Last9 Agent] Warning: Failed to create counter %s: %v", name, err)
-		return &Counter{}
+		return nil, fmt.Errorf("failed to create counter %s: %w", name, err)
 	}
 
-	return &Counter{counter: counter}
+	return &Counter{counter: counter}, nil
 }
 
 // Add increments the counter by the given value.
@@ -68,11 +71,11 @@ type FloatCounter struct {
 }
 
 // NewFloatCounter creates a new floating point counter metric.
-func NewFloatCounter(name, description, unit string) *FloatCounter {
+// Returns an error if the agent cannot be initialized or the counter cannot be created.
+func NewFloatCounter(name, description, unit string) (*FloatCounter, error) {
 	if !agent.IsInitialized() {
 		if err := agent.Start(); err != nil {
-			log.Printf("[Last9 Agent] Warning: Failed to auto-start agent: %v", err)
-			return &FloatCounter{}
+			return nil, fmt.Errorf("failed to initialize agent: %w", err)
 		}
 	}
 
@@ -83,11 +86,10 @@ func NewFloatCounter(name, description, unit string) *FloatCounter {
 		metric.WithUnit(unit),
 	)
 	if err != nil {
-		log.Printf("[Last9 Agent] Warning: Failed to create float counter %s: %v", name, err)
-		return &FloatCounter{}
+		return nil, fmt.Errorf("failed to create float counter %s: %w", name, err)
 	}
 
-	return &FloatCounter{counter: counter}
+	return &FloatCounter{counter: counter}, nil
 }
 
 // Add increments the counter by the given value.
@@ -104,20 +106,24 @@ type Histogram struct {
 }
 
 // NewHistogram creates a new histogram metric.
+// Returns an error if the agent cannot be initialized or the histogram cannot be created.
 //
 // Example:
 //
-//	latencyHistogram := metrics.NewHistogram(
+//	latencyHistogram, err := metrics.NewHistogram(
 //	    "request.duration",
 //	    "Request duration in milliseconds",
 //	    "ms",
 //	)
+//	if err != nil {
+//	    log.Printf("Failed to create histogram: %v", err)
+//	    return err
+//	}
 //	latencyHistogram.Record(ctx, durationMs, attribute.String("endpoint", "/api/users"))
-func NewHistogram(name, description, unit string) *Histogram {
+func NewHistogram(name, description, unit string) (*Histogram, error) {
 	if !agent.IsInitialized() {
 		if err := agent.Start(); err != nil {
-			log.Printf("[Last9 Agent] Warning: Failed to auto-start agent: %v", err)
-			return &Histogram{}
+			return nil, fmt.Errorf("failed to initialize agent: %w", err)
 		}
 	}
 
@@ -128,11 +134,10 @@ func NewHistogram(name, description, unit string) *Histogram {
 		metric.WithUnit(unit),
 	)
 	if err != nil {
-		log.Printf("[Last9 Agent] Warning: Failed to create histogram %s: %v", name, err)
-		return &Histogram{}
+		return nil, fmt.Errorf("failed to create histogram %s: %w", name, err)
 	}
 
-	return &Histogram{histogram: histogram}
+	return &Histogram{histogram: histogram}, nil
 }
 
 // Record records a value in the histogram.
@@ -148,20 +153,24 @@ type FloatHistogram struct {
 }
 
 // NewFloatHistogram creates a new floating point histogram metric.
+// Returns an error if the agent cannot be initialized or the histogram cannot be created.
 //
 // Example:
 //
-//	responseSize := metrics.NewFloatHistogram(
+//	responseSize, err := metrics.NewFloatHistogram(
 //	    "response.size",
 //	    "Response size in kilobytes",
 //	    "kB",
 //	)
+//	if err != nil {
+//	    log.Printf("Failed to create histogram: %v", err)
+//	    return err
+//	}
 //	responseSize.Record(ctx, sizeKB, attribute.String("content_type", "application/json"))
-func NewFloatHistogram(name, description, unit string) *FloatHistogram {
+func NewFloatHistogram(name, description, unit string) (*FloatHistogram, error) {
 	if !agent.IsInitialized() {
 		if err := agent.Start(); err != nil {
-			log.Printf("[Last9 Agent] Warning: Failed to auto-start agent: %v", err)
-			return &FloatHistogram{}
+			return nil, fmt.Errorf("failed to initialize agent: %w", err)
 		}
 	}
 
@@ -172,11 +181,10 @@ func NewFloatHistogram(name, description, unit string) *FloatHistogram {
 		metric.WithUnit(unit),
 	)
 	if err != nil {
-		log.Printf("[Last9 Agent] Warning: Failed to create float histogram %s: %v", name, err)
-		return &FloatHistogram{}
+		return nil, fmt.Errorf("failed to create float histogram %s: %w", name, err)
 	}
 
-	return &FloatHistogram{histogram: histogram}
+	return &FloatHistogram{histogram: histogram}, nil
 }
 
 // Record records a value in the histogram.
@@ -194,11 +202,12 @@ type Gauge struct {
 
 // NewGauge creates a new gauge metric with a callback function.
 // The callback is invoked periodically to read the current value.
+// Returns an error if the agent cannot be initialized or the gauge cannot be created.
 //
 // Example:
 //
 //	var activeConnections int64
-//	connectionGauge := metrics.NewGauge(
+//	connectionGauge, err := metrics.NewGauge(
 //	    "active.connections",
 //	    "Number of active connections",
 //	    "{connection}",
@@ -206,11 +215,14 @@ type Gauge struct {
 //	        return atomic.LoadInt64(&activeConnections)
 //	    },
 //	)
-func NewGauge(name, description, unit string, callback func(context.Context) int64) *Gauge {
+//	if err != nil {
+//	    log.Printf("Failed to create gauge: %v", err)
+//	    return err
+//	}
+func NewGauge(name, description, unit string, callback func(context.Context) int64) (*Gauge, error) {
 	if !agent.IsInitialized() {
 		if err := agent.Start(); err != nil {
-			log.Printf("[Last9 Agent] Warning: Failed to auto-start agent: %v", err)
-			return &Gauge{}
+			return nil, fmt.Errorf("failed to initialize agent: %w", err)
 		}
 	}
 
@@ -226,11 +238,10 @@ func NewGauge(name, description, unit string, callback func(context.Context) int
 		}),
 	)
 	if err != nil {
-		log.Printf("[Last9 Agent] Warning: Failed to create gauge %s: %v", name, err)
-		return &Gauge{}
+		return nil, fmt.Errorf("failed to create gauge %s: %w", name, err)
 	}
 
-	return &Gauge{gauge: gauge}
+	return &Gauge{gauge: gauge}, nil
 }
 
 // FloatGauge represents a floating point value that can go up and down.
@@ -239,11 +250,12 @@ type FloatGauge struct {
 }
 
 // NewFloatGauge creates a new floating point gauge metric with a callback function.
+// Returns an error if the agent cannot be initialized or the gauge cannot be created.
 //
 // Example:
 //
 //	var cpuUsage float64
-//	cpuGauge := metrics.NewFloatGauge(
+//	cpuGauge, err := metrics.NewFloatGauge(
 //	    "cpu.usage",
 //	    "CPU usage percentage",
 //	    "%",
@@ -251,11 +263,14 @@ type FloatGauge struct {
 //	        return getCPUUsage()
 //	    },
 //	)
-func NewFloatGauge(name, description, unit string, callback func(context.Context) float64) *FloatGauge {
+//	if err != nil {
+//	    log.Printf("Failed to create gauge: %v", err)
+//	    return err
+//	}
+func NewFloatGauge(name, description, unit string, callback func(context.Context) float64) (*FloatGauge, error) {
 	if !agent.IsInitialized() {
 		if err := agent.Start(); err != nil {
-			log.Printf("[Last9 Agent] Warning: Failed to auto-start agent: %v", err)
-			return &FloatGauge{}
+			return nil, fmt.Errorf("failed to initialize agent: %w", err)
 		}
 	}
 
@@ -271,11 +286,10 @@ func NewFloatGauge(name, description, unit string, callback func(context.Context
 		}),
 	)
 	if err != nil {
-		log.Printf("[Last9 Agent] Warning: Failed to create float gauge %s: %v", name, err)
-		return &FloatGauge{}
+		return nil, fmt.Errorf("failed to create float gauge %s: %w", name, err)
 	}
 
-	return &FloatGauge{gauge: gauge}
+	return &FloatGauge{gauge: gauge}, nil
 }
 
 // UpDownCounter is a metric that can increase or decrease.
@@ -285,21 +299,25 @@ type UpDownCounter struct {
 }
 
 // NewUpDownCounter creates a new up-down counter metric.
+// Returns an error if the agent cannot be initialized or the counter cannot be created.
 //
 // Example:
 //
-//	queueSize := metrics.NewUpDownCounter(
+//	queueSize, err := metrics.NewUpDownCounter(
 //	    "queue.size",
 //	    "Number of items in queue",
 //	    "{item}",
 //	)
+//	if err != nil {
+//	    log.Printf("Failed to create counter: %v", err)
+//	    return err
+//	}
 //	queueSize.Add(ctx, 5)  // Add 5 items
 //	queueSize.Add(ctx, -3) // Remove 3 items
-func NewUpDownCounter(name, description, unit string) *UpDownCounter {
+func NewUpDownCounter(name, description, unit string) (*UpDownCounter, error) {
 	if !agent.IsInitialized() {
 		if err := agent.Start(); err != nil {
-			log.Printf("[Last9 Agent] Warning: Failed to auto-start agent: %v", err)
-			return &UpDownCounter{}
+			return nil, fmt.Errorf("failed to initialize agent: %w", err)
 		}
 	}
 
@@ -310,11 +328,10 @@ func NewUpDownCounter(name, description, unit string) *UpDownCounter {
 		metric.WithUnit(unit),
 	)
 	if err != nil {
-		log.Printf("[Last9 Agent] Warning: Failed to create up-down counter %s: %v", name, err)
-		return &UpDownCounter{}
+		return nil, fmt.Errorf("failed to create up-down counter %s: %w", name, err)
 	}
 
-	return &UpDownCounter{counter: counter}
+	return &UpDownCounter{counter: counter}, nil
 }
 
 // Add adds the given delta to the counter (can be negative).

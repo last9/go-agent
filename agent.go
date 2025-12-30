@@ -16,11 +16,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/last9/go-agent/config"
-	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -29,7 +30,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.25.0"
 )
 
 var (
@@ -48,12 +49,22 @@ type Agent struct {
 // Start initializes the Last9 agent with configuration from environment variables.
 // It sets up OpenTelemetry tracing and metrics exporters configured for Last9.
 //
+// Initialization Behavior:
+//   - Uses context.Background() for exporter initialization (no cancellation support)
+//   - Initialization typically completes in <100ms
+//   - If initialization takes too long, the process will be blocked
+//   - For custom timeout/cancellation, configure exporters manually
+//
 // Environment variables:
-//   - OTEL_EXPORTER_OTLP_ENDPOINT: Last9 OTLP endpoint (required)
-//   - OTEL_EXPORTER_OTLP_HEADERS: Authorization header (required)
+//   - OTEL_EXPORTER_OTLP_ENDPOINT: Last9 OTLP endpoint (optional for development)
+//   - OTEL_EXPORTER_OTLP_HEADERS: Authorization header (required for production)
 //   - OTEL_SERVICE_NAME: Service name (default: "unknown-service")
 //   - OTEL_RESOURCE_ATTRIBUTES: Additional resource attributes as key=value pairs
 //   - OTEL_TRACES_SAMPLER: Trace sampling strategy (default: "always_on")
+//     Supported: always_on, always_off, traceidratio, parentbased_always_on,
+//     parentbased_always_off, parentbased_traceidratio
+//   - OTEL_TRACES_SAMPLER_ARG: Sampling ratio for traceidratio samplers (default: "1.0")
+//     Must be between 0.0 and 1.0 (e.g., "0.1" for 10% sampling)
 //
 // Example:
 //
@@ -76,7 +87,7 @@ func Start() error {
 		}
 
 		// Initialize tracer provider
-		tp, tpErr := initTracerProvider(res)
+		tp, tpErr := initTracerProvider(res, cfg)
 		if tpErr != nil {
 			err = fmt.Errorf("failed to initialize tracer provider: %w", tpErr)
 			return
@@ -99,8 +110,8 @@ func Start() error {
 			),
 		)
 
-		// Start runtime metrics collection
-		if runtimeErr := runtime.Start(runtime.WithMinimumReadMemStatsInterval(15 * time.Second)); runtimeErr != nil {
+		// Start runtime metrics collection (version-specific implementation via build tags)
+		if runtimeErr := startRuntimeInstrumentation(15 * time.Second); runtimeErr != nil {
 			log.Printf("[Last9 Agent] Warning: Failed to start runtime metrics: %v", runtimeErr)
 		}
 
@@ -196,18 +207,67 @@ func createResource(cfg *config.Config) (*resource.Resource, error) {
 }
 
 // initTracerProvider creates and configures the trace provider
-func initTracerProvider(res *resource.Resource) (*sdktrace.TracerProvider, error) {
+func initTracerProvider(res *resource.Resource, cfg *config.Config) (*sdktrace.TracerProvider, error) {
 	exporter, err := otlptracehttp.New(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 	}
 
+	// Create sampler based on configuration
+	sampler := createSampler(cfg.Sampler)
+
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
+		sdktrace.WithSampler(sampler),
 	)
 
 	return tp, nil
+}
+
+// createSampler creates an OpenTelemetry sampler based on the sampler name.
+// Supports all standard OpenTelemetry samplers:
+//   - always_on: Sample all traces (default)
+//   - always_off: Sample no traces
+//   - traceidratio: Sample a percentage of traces based on trace ID
+//   - parentbased_always_on: Always sample if parent is sampled, otherwise always sample
+//   - parentbased_always_off: Always sample if parent is sampled, otherwise never sample
+//   - parentbased_traceidratio: Always sample if parent is sampled, otherwise use ratio
+func createSampler(samplerName string) sdktrace.Sampler {
+	switch samplerName {
+	case "always_off":
+		return sdktrace.NeverSample()
+	case "traceidratio":
+		ratio := parseSamplerRatio(os.Getenv("OTEL_TRACES_SAMPLER_ARG"))
+		return sdktrace.TraceIDRatioBased(ratio)
+	case "parentbased_always_on":
+		return sdktrace.ParentBased(sdktrace.AlwaysSample())
+	case "parentbased_always_off":
+		return sdktrace.ParentBased(sdktrace.NeverSample())
+	case "parentbased_traceidratio":
+		ratio := parseSamplerRatio(os.Getenv("OTEL_TRACES_SAMPLER_ARG"))
+		return sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))
+	case "always_on", "":
+		return sdktrace.AlwaysSample()
+	default:
+		log.Printf("[Last9 Agent] Warning: Unknown sampler %q, using always_on", samplerName)
+		return sdktrace.AlwaysSample()
+	}
+}
+
+// parseSamplerRatio parses the sampling ratio from a string.
+// Returns 1.0 if the string is empty or invalid.
+// The ratio must be between 0.0 and 1.0.
+func parseSamplerRatio(ratioStr string) float64 {
+	if ratioStr == "" {
+		return 1.0
+	}
+	ratio, err := strconv.ParseFloat(ratioStr, 64)
+	if err != nil || ratio < 0 || ratio > 1 {
+		log.Printf("[Last9 Agent] Warning: Invalid sampler ratio %q, using 1.0", ratioStr)
+		return 1.0
+	}
+	return ratio
 }
 
 // initMeterProvider creates and configures the meter provider

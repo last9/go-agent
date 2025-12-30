@@ -27,7 +27,7 @@ func setupKafkaTest(t *testing.T) (*kafka.KafkaContainer, *testutil.MockCollecto
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 
 	// Start Kafka container
-	kafkaContainer, err := kafka.Run(ctx, "confluentinc/confluent-local:7.6.0")
+	kafkaContainer, err := kafka.RunContainer(ctx, kafka.WithClusterID("test-cluster"))
 	require.NoError(t, err, "failed to start Kafka container")
 
 	t.Cleanup(func() {

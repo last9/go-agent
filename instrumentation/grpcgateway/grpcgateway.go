@@ -10,6 +10,7 @@ import (
 	"github.com/last9/go-agent"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
 	"google.golang.org/grpc"
 )
 
@@ -56,9 +57,12 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 		}
 	}
 
-	// Add OpenTelemetry interceptors for tracing
+	// Add OpenTelemetry stats handler for tracing
+	// Explicitly pass the global propagator to ensure context propagation works
 	interceptorOpts := []grpc.ServerOption{
-		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.StatsHandler(otelgrpc.NewServerHandler(
+			otelgrpc.WithPropagators(otel.GetTextMapPropagator()),
+		)),
 	}
 
 	// Combine with user-provided options
@@ -98,7 +102,10 @@ func WrapHTTPMux(mux *http.ServeMux, serviceName string) http.Handler {
 }
 
 // NewDialOption returns a gRPC dial option that instruments client connections.
-// Use this when connecting the grpc-gateway to your gRPC server to trace client calls.
+// Use this when connecting to a gRPC server to automatically trace client calls.
+//
+// The returned StatsHandler automatically propagates trace context and creates
+// client-side spans for all gRPC calls.
 //
 // Example:
 //
@@ -108,5 +115,8 @@ func WrapHTTPMux(mux *http.ServeMux, serviceName string) http.Handler {
 //	    grpcgateway.NewDialOption(),
 //	)
 func NewDialOption() grpc.DialOption {
-	return grpc.WithStatsHandler(otelgrpc.NewClientHandler())
+	// Use StatsHandler with explicit propagator for context propagation
+	return grpc.WithStatsHandler(otelgrpc.NewClientHandler(
+		otelgrpc.WithPropagators(otel.GetTextMapPropagator()),
+	))
 }

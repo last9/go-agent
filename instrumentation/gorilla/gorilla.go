@@ -2,6 +2,8 @@
 package gorilla
 
 import (
+	"log"
+
 	"github.com/gorilla/mux"
 	"github.com/last9/go-agent"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gorilla/mux/otelmux"
@@ -56,7 +58,7 @@ func setupInstrumentation(r *mux.Router) {
 	if !agent.IsInitialized() {
 		// Agent not initialized, try to start it
 		if err := agent.Start(); err != nil {
-			// Log error but don't fail
+			log.Printf("[Last9 Agent] Warning: Failed to auto-start agent for Gorilla middleware: %v (instrumentation will not be active)", err)
 			return
 		}
 	}

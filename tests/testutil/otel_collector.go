@@ -10,7 +10,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.25.0"
 )
 
 // MockCollector provides a mock OTLP collector for testing.
@@ -65,10 +65,37 @@ func (m *MockCollector) GetSpans() []sdktrace.ReadOnlySpan {
 	return m.spanRecorder.Ended()
 }
 
-// Reset clears all captured spans.
+// Reset clears all captured spans by creating a new span recorder.
 // Useful for running multiple sub-tests within the same test function.
+// IMPORTANT: Do NOT call Reset() if your test code has cached references to
+// tracers (e.g., middleware created before Reset()). In that case, create
+// a new router/client after Reset() or use separate MockCollectors per subtest.
 func (m *MockCollector) Reset() {
-	m.spanRecorder.Reset()
+	// NOTE: We do NOT shutdown the old provider because existing middleware
+	// may still reference it. Instead, we create a fresh provider and update
+	// the global reference. Old spans will be lost, but that's the point of Reset().
+
+	// Create new span recorder
+	m.spanRecorder = tracetest.NewSpanRecorder()
+
+	// Create new tracer provider with the new recorder
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSpanProcessor(m.spanRecorder),
+		sdktrace.WithResource(resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceNameKey.String("test-service"),
+		)),
+	)
+
+	// Update tracer provider  and set globally
+	m.tracerProvider = tp
+	otel.SetTracerProvider(tp)
+
+	// Reset the propagator as well
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
 }
 
 // Shutdown shuts down the tracer provider and flushes any pending spans.

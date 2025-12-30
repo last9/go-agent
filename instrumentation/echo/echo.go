@@ -2,6 +2,8 @@
 package echo
 
 import (
+	"log"
+
 	"github.com/labstack/echo/v4"
 	"github.com/last9/go-agent"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
@@ -56,7 +58,7 @@ func setupInstrumentation(e *echo.Echo) {
 	if !agent.IsInitialized() {
 		// Agent not initialized, try to start it
 		if err := agent.Start(); err != nil {
-			// Log error but don't fail
+			log.Printf("[Last9 Agent] Warning: Failed to auto-start agent for Echo middleware: %v (instrumentation will not be active)", err)
 			return
 		}
 	}
