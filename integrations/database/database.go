@@ -4,8 +4,12 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
 
 	"go.nhat.io/otelsql"
+	"go.opentelemetry.io/otel/attribute"
 	semconv "go.opentelemetry.io/otel/semconv/v1.25.0"
 )
 
@@ -22,6 +26,136 @@ type Config struct {
 
 	// Additional otelsql driver options
 	Options []otelsql.DriverOption
+}
+
+// extractDSNAttributes parses a database connection string and extracts
+// OpenTelemetry semantic convention attributes for database spans.
+//
+// This function extracts:
+//   - server.address: The database host (using semconv v1.21.0+)
+//   - server.port: The database port (using semconv v1.21.0+)
+//   - db.user: The database user
+//   - db.name: The database name (can be overridden via Config.DatabaseName)
+//
+// Example PostgreSQL DSN: postgres://user:pass@localhost:5432/dbname?sslmode=disable
+// Example MySQL DSN: user:pass@tcp(localhost:3306)/dbname
+//
+// Note: The older net.peer.name attribute has been replaced by server.address
+// in OpenTelemetry semantic conventions v1.21.0+
+func extractDSNAttributes(dsn, driverName string) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{}
+
+	// Handle empty DSN
+	if dsn == "" {
+		return attrs
+	}
+
+	// Parse based on driver type
+	switch driverName {
+	case "postgres", "pgx":
+		return extractPostgresDSNAttributes(dsn)
+	case "mysql":
+		return extractMySQLDSNAttributes(dsn)
+	case "sqlite", "sqlite3":
+		// SQLite uses file paths, no network attributes needed
+		return attrs
+	default:
+		// Try parsing as URL for generic drivers
+		return extractPostgresDSNAttributes(dsn)
+	}
+}
+
+// extractPostgresDSNAttributes parses PostgreSQL-style connection strings
+// Format: postgres://user:pass@host:port/dbname?params
+func extractPostgresDSNAttributes(dsn string) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{}
+
+	// Parse the connection URI
+	parsedURI, err := url.Parse(dsn)
+	if err != nil {
+		// If parsing fails, return empty attributes rather than failing
+		return attrs
+	}
+
+	// Extract host (server.address)
+	if parsedURI.Hostname() != "" {
+		attrs = append(attrs, semconv.ServerAddress(parsedURI.Hostname()))
+	}
+
+	// Extract port (server.port)
+	if parsedURI.Port() != "" {
+		if port, err := strconv.Atoi(parsedURI.Port()); err == nil {
+			attrs = append(attrs, semconv.ServerPort(port))
+		}
+	}
+
+	// Extract database user (db.user)
+	if parsedURI.User != nil {
+		if username := parsedURI.User.Username(); username != "" {
+			attrs = append(attrs, semconv.DBUser(username))
+		}
+	}
+
+	// Extract database name (db.name)
+	// Note: This can be overridden by Config.DatabaseName
+	if parsedURI.Path != "" {
+		dbName := strings.TrimPrefix(parsedURI.Path, "/")
+		if dbName != "" {
+			attrs = append(attrs, semconv.DBName(dbName))
+		}
+	}
+
+	return attrs
+}
+
+// extractMySQLDSNAttributes parses MySQL-style connection strings
+// Format: user:pass@tcp(host:port)/dbname or user:pass@unix(/path/to/socket)/dbname
+func extractMySQLDSNAttributes(dsn string) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{}
+
+	// Extract user
+	if idx := strings.Index(dsn, "@"); idx > 0 {
+		userPass := dsn[:idx]
+		if colonIdx := strings.Index(userPass, ":"); colonIdx > 0 {
+			username := userPass[:colonIdx]
+			attrs = append(attrs, semconv.DBUser(username))
+		} else {
+			attrs = append(attrs, semconv.DBUser(userPass))
+		}
+		dsn = dsn[idx+1:] // Remove user part
+	}
+
+	// Extract host and port from tcp(host:port) format
+	if strings.HasPrefix(dsn, "tcp(") {
+		endIdx := strings.Index(dsn, ")")
+		if endIdx > 0 {
+			hostPort := dsn[4:endIdx]
+			if colonIdx := strings.LastIndex(hostPort, ":"); colonIdx > 0 {
+				host := hostPort[:colonIdx]
+				port := hostPort[colonIdx+1:]
+				attrs = append(attrs, semconv.ServerAddress(host))
+				if portNum, err := strconv.Atoi(port); err == nil {
+					attrs = append(attrs, semconv.ServerPort(portNum))
+				}
+			} else {
+				attrs = append(attrs, semconv.ServerAddress(hostPort))
+			}
+			dsn = dsn[endIdx+1:] // Remove tcp(...) part
+		}
+	}
+
+	// Extract database name
+	if strings.HasPrefix(dsn, "/") {
+		dbName := dsn[1:]
+		if qIdx := strings.Index(dbName, "?"); qIdx > 0 {
+			dbName = dbName[:qIdx]
+		}
+		if dbName != "" {
+			attrs = append(attrs, semconv.DBName(dbName))
+		}
+	}
+
+	return attrs
 }
 
 // Open opens a database connection with Last9 instrumentation.
@@ -60,6 +194,10 @@ func Open(cfg Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("database.Open: DSN is required")
 	}
 
+	// Extract connection attributes from DSN
+	// This adds server.address, server.port, db.user, and db.name from the connection string
+	dsnAttrs := extractDSNAttributes(cfg.DSN, cfg.DriverName)
+
 	// Default driver options
 	opts := []otelsql.DriverOption{
 		otelsql.AllowRoot(),
@@ -68,7 +206,12 @@ func Open(cfg Config) (*sql.DB, error) {
 		otelsql.TraceRowsAffected(),
 	}
 
-	// Add database name if provided
+	// Add DSN-extracted attributes
+	if len(dsnAttrs) > 0 {
+		opts = append(opts, otelsql.WithDefaultAttributes(dsnAttrs...))
+	}
+
+	// Add database name if provided (this will override db.name from DSN if different)
 	if cfg.DatabaseName != "" {
 		opts = append(opts, otelsql.WithDatabaseName(cfg.DatabaseName))
 	}

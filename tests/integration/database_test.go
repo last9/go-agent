@@ -320,3 +320,67 @@ func TestDatabase_PreparedStatement(t *testing.T) {
 	spans := collector.GetSpans()
 	require.GreaterOrEqual(t, len(spans), 2, "should have prepared statement spans")
 }
+
+func TestDatabase_ConnectionAttributes(t *testing.T) {
+	_, connStr, ctx, cancel := setupPostgresTest(t)
+	defer cancel()
+
+	err := agent.Start()
+	require.NoError(t, err)
+	defer agent.Shutdown()
+
+	collector := testutil.NewMockCollector()
+	defer collector.Shutdown(ctx)
+
+	db, err := database.Open(database.Config{
+		DriverName:   "postgres",
+		DSN:          connStr,
+		DatabaseName: "testdb",
+	})
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx, parentSpan := testutil.CreateTestSpan(ctx, "test-attributes-parent")
+	defer parentSpan.End()
+
+	// Execute a simple query
+	var result int
+	err = db.QueryRowContext(ctx, "SELECT 1").Scan(&result)
+	require.NoError(t, err)
+
+	time.Sleep(200 * time.Millisecond)
+
+	spans := collector.GetSpans()
+	require.GreaterOrEqual(t, len(spans), 2, "should have query span")
+
+	// Find database span
+	dbSpan := testutil.FindSpanByKind(spans, trace.SpanKindClient)
+	require.NotNil(t, dbSpan, "database client span not found")
+
+	// Verify connection attributes are present
+	attrs := dbSpan.Attributes()
+	attrMap := make(map[string]interface{})
+	for _, attr := range attrs {
+		attrMap[string(attr.Key)] = attr.Value.AsInterface()
+	}
+
+	t.Logf("Database span attributes: %+v", attrMap)
+
+	// Verify server.address is set (replaces old net.peer.name)
+	assert.Contains(t, attrMap, "server.address", "server.address attribute should be set")
+	assert.NotEmpty(t, attrMap["server.address"], "server.address should not be empty")
+
+	// Verify server.port is set
+	assert.Contains(t, attrMap, "server.port", "server.port attribute should be set")
+
+	// Verify db.user is set
+	assert.Contains(t, attrMap, "db.user", "db.user attribute should be set")
+	assert.Equal(t, "testuser", attrMap["db.user"], "db.user should match connection string")
+
+	// Verify db.name is set
+	assert.Contains(t, attrMap, "db.name", "db.name attribute should be set")
+	assert.Equal(t, "testdb", attrMap["db.name"], "db.name should match database name")
+
+	// Verify db.system is set
+	assert.Contains(t, attrMap, "db.system", "db.system attribute should be set")
+}
