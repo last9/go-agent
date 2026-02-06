@@ -290,6 +290,15 @@ defer db.Close()
 rows, err := db.Query("SELECT * FROM users")
 ```
 
+**✨ Connection Attributes**: The agent automatically extracts connection metadata from your DSN:
+- `server.address` - Database host (replaces deprecated `net.peer.name`)
+- `server.port` - Database port
+- `db.user` - Database user
+- `db.name` - Database name
+- `db.system` - Database type (postgresql, mysql, sqlite)
+
+These attributes follow [OpenTelemetry semantic conventions v1.25.0](https://opentelemetry.io/docs/specs/semconv/database/database-spans/) and enable better observability of database connections.
+
 ### Quick initialization (panics on error):
 
 ```go
