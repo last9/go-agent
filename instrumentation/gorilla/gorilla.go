@@ -3,6 +3,7 @@ package gorilla
 
 import (
 	"log"
+	"net/http"
 
 	"github.com/gorilla/mux"
 	"github.com/last9/go-agent"
@@ -50,7 +51,15 @@ func Middleware() mux.MiddlewareFunc {
 		serviceName = cfg.ServiceName
 	}
 
-	return otelmux.Middleware(serviceName)
+	opts := []otelmux.Option{}
+	rm := agent.GetRouteMatcher()
+	if !rm.IsEmpty() {
+		opts = append(opts, otelmux.WithFilter(func(r *http.Request) bool {
+			return !rm.ShouldExclude(r.URL.Path)
+		}))
+	}
+
+	return otelmux.Middleware(serviceName, opts...)
 }
 
 // setupInstrumentation adds Last9 telemetry to a Gorilla Mux router

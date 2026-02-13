@@ -156,6 +156,52 @@ func TestCreateSampler(t *testing.T) {
 	}
 }
 
+func TestGetRouteMatcher(t *testing.T) {
+	defer Reset()
+
+	// Before Start, returns nil
+	rm := GetRouteMatcher()
+	if rm != nil {
+		t.Error("GetRouteMatcher() should return nil before Start()")
+	}
+	// Nil receiver is safe — should not exclude anything
+	if rm.ShouldExclude("/health") {
+		t.Error("nil RouteMatcher should not exclude /health")
+	}
+
+	os.Setenv("OTEL_SERVICE_NAME", "test-service")
+	defer os.Unsetenv("OTEL_SERVICE_NAME")
+	// Use defaults (health endpoints excluded)
+	os.Unsetenv("LAST9_EXCLUDED_PATHS")
+	os.Unsetenv("LAST9_EXCLUDED_PATH_PREFIXES")
+	os.Unsetenv("LAST9_EXCLUDED_PATH_PATTERNS")
+
+	if err := Start(); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+
+	rm = GetRouteMatcher()
+	if rm == nil {
+		t.Fatal("GetRouteMatcher() should return non-nil after Start()")
+	}
+	if rm.IsEmpty() {
+		t.Error("RouteMatcher should not be empty with default exclusion rules")
+	}
+
+	// Default exact excludes /health
+	if !rm.ShouldExclude("/health") {
+		t.Error("default RouteMatcher should exclude /health")
+	}
+	// Default pattern excludes /v1/health
+	if !rm.ShouldExclude("/v1/health") {
+		t.Error("default RouteMatcher should exclude /v1/health via glob pattern")
+	}
+	// Should not exclude normal paths
+	if rm.ShouldExclude("/api/users") {
+		t.Error("default RouteMatcher should not exclude /api/users")
+	}
+}
+
 func TestParseSamplerRatio(t *testing.T) {
 	tests := []struct {
 		input string

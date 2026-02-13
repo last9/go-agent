@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/last9/go-agent/config"
+	"github.com/last9/go-agent/internal/routematcher"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -41,6 +42,7 @@ var (
 // Agent represents the Last9 telemetry agent
 type Agent struct {
 	config         *config.Config
+	routeMatcher   *routematcher.RouteMatcher
 	tracerProvider *sdktrace.TracerProvider
 	meterProvider  *metric.MeterProvider
 	shutdown       func(context.Context) error
@@ -115,8 +117,12 @@ func Start() error {
 			log.Printf("[Last9 Agent] Warning: Failed to start runtime metrics: %v", runtimeErr)
 		}
 
+		// Build route matcher for path exclusion
+		rm := routematcher.New(cfg.ExcludedPaths, cfg.ExcludedPathPrefixes, cfg.ExcludedPathPatterns)
+
 		globalAgent = &Agent{
 			config:         cfg,
+			routeMatcher:   rm,
 			tracerProvider: tp,
 			meterProvider:  mp,
 			shutdown: func(ctx context.Context) error {
@@ -173,6 +179,15 @@ func GetConfig() *config.Config {
 		return nil
 	}
 	return globalAgent.config
+}
+
+// GetRouteMatcher returns the route matcher for path exclusion (or nil if not initialized).
+// Nil is safe to use — RouteMatcher.ShouldExclude on nil returns false (no exclusion).
+func GetRouteMatcher() *routematcher.RouteMatcher {
+	if globalAgent == nil {
+		return nil
+	}
+	return globalAgent.routeMatcher
 }
 
 // createResource creates an OpenTelemetry resource with service information
