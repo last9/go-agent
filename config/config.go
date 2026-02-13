@@ -29,6 +29,11 @@ type Config struct {
 	// Sampler is the trace sampling strategy (from OTEL_TRACES_SAMPLER)
 	Sampler string
 
+	// SamplerRatio is the sampling ratio for traceidratio samplers (0.0-1.0).
+	// Only used when Sampler is "traceidratio" or "parentbased_traceidratio".
+	// Set via WithSamplingRate() option. Zero value means use env var OTEL_TRACES_SAMPLER_ARG.
+	SamplerRatio float64
+
 	// ResourceAttributes contains additional resource attributes
 	ResourceAttributes []attribute.KeyValue
 }
