@@ -5,10 +5,10 @@ import "testing"
 func TestShouldExclude(t *testing.T) {
 	tests := []struct {
 		name     string
+		path     string
 		exact    []string
 		prefixes []string
 		patterns []string
-		path     string
 		want     bool
 	}{
 		// Exact matches
@@ -91,10 +91,10 @@ func TestShouldExclude(t *testing.T) {
 		},
 		// No false positives
 		{
-			name:     "no false positive on partial exact",
-			exact:    []string{"/health"},
-			path:     "/healthy",
-			want:     false,
+			name:  "no false positive on partial exact",
+			exact: []string{"/health"},
+			path:  "/healthy",
+			want:  false,
 		},
 		{
 			name:     "no false positive on partial prefix",
@@ -155,12 +155,12 @@ func TestIsEmpty(t *testing.T) {
 		patterns []string
 		want     bool
 	}{
-		{"nil slices", nil, nil, nil, true},
-		{"empty slices", []string{}, []string{}, []string{}, true},
-		{"only empty strings", []string{""}, []string{""}, []string{""}, true},
-		{"has exact", []string{"/health"}, nil, nil, false},
-		{"has prefix", nil, []string{"/api/"}, nil, false},
-		{"has pattern", nil, nil, []string{"/*/health"}, false},
+		{name: "nil slices", want: true},
+		{name: "empty slices", exact: []string{}, prefixes: []string{}, patterns: []string{}, want: true},
+		{name: "only empty strings", exact: []string{""}, prefixes: []string{""}, patterns: []string{""}, want: true},
+		{name: "has exact", exact: []string{"/health"}, want: false},
+		{name: "has prefix", prefixes: []string{"/api/"}, want: false},
+		{name: "has pattern", patterns: []string{"/*/health"}, want: false},
 	}
 
 	for _, tt := range tests {
