@@ -14,6 +14,7 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 - [Kafka Support](#-kafka-support) - Producers • Consumers
 - [HTTP Client](#-http-client-support)
 - [Metrics Support](#-metrics-support) - Automatic • Custom • Runtime
+- [Route Exclusion](#-route-exclusion) - Skip tracing for health checks & internal paths
 - [Configuration](#️-configuration)
 - [Requirements & Compatibility](#-requirements--compatibility)
 - [Testing](#-testing)
@@ -26,6 +27,7 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 - 🎯 **Auto-instrumentation** - HTTP, gRPC, SQL, Redis, Kafka automatically traced with proper span nesting
 - 📊 **Automatic metrics** - Runtime (memory, GC, goroutines), HTTP, gRPC, database, Kafka, Redis metrics out-of-the-box
 - 📈 **Custom metrics** - Simple helpers for counters, histograms, gauges for business metrics
+- 🚫 **Route exclusion** - Automatically skips health checks and infrastructure endpoints from tracing
 - ⚙️ **Environment-based config** - Uses standard OpenTelemetry environment variables (no hardcoded config)
 - 🔍 **Complete observability** - Full distributed tracing + metrics across all layers (HTTP → gRPC → DB → External APIs)
 
@@ -618,6 +620,45 @@ func processOrder(ctx context.Context, value float64) {
 }
 ```
 
+## 🚫 Route Exclusion
+
+The agent automatically skips tracing for common health check and infrastructure endpoints, reducing noise in your traces. This works across all supported frameworks (net/http, Gin, Chi, Echo, Gorilla Mux, gRPC-Gateway).
+
+### Default Excluded Routes
+
+Out of the box, the following paths are excluded from tracing:
+
+- **Exact paths**: `/health`, `/healthz`, `/metrics`, `/ready`, `/live`, `/ping`
+- **Glob patterns**: `/*/health`, `/*/healthz`, `/*/metrics`, `/*/ready`, `/*/live`, `/*/ping`
+
+### Configuration
+
+Three environment variables control route exclusion:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LAST9_EXCLUDED_PATHS` | `/health,/healthz,/metrics,/ready,/live,/ping` | Exact path matches |
+| `LAST9_EXCLUDED_PATH_PREFIXES` | *(none)* | Prefix matches (e.g., `/internal/`) |
+| `LAST9_EXCLUDED_PATH_PATTERNS` | `/*/health,/*/healthz,/*/metrics,/*/ready,/*/live,/*/ping` | Glob patterns using `path.Match` semantics |
+
+### Examples
+
+```bash
+# Add a prefix exclusion for internal debug endpoints
+export LAST9_EXCLUDED_PATH_PREFIXES="/internal/,/debug/"
+
+# Custom exact paths to exclude
+export LAST9_EXCLUDED_PATHS="/health,/healthz,/status,/version"
+
+# Disable all default exclusions (trace everything)
+export LAST9_EXCLUDED_PATHS=""
+export LAST9_EXCLUDED_PATH_PATTERNS=""
+```
+
+### How It Works
+
+Route matching is evaluated in order: exact match (O(1) map lookup) → prefix match → glob pattern match. The first match wins. Setting an environment variable to an empty string (`""`) disables its defaults, allowing you to opt out of default exclusions.
+
 ## ⚙️ Configuration
 
 The agent reads configuration from environment variables following OpenTelemetry standards:
@@ -630,6 +671,9 @@ The agent reads configuration from environment variables following OpenTelemetry
 | `OTEL_SERVICE_VERSION` | No | - | Service version (e.g., git commit SHA) |
 | `OTEL_RESOURCE_ATTRIBUTES` | No | - | Additional attributes (key=value pairs) |
 | `OTEL_TRACES_SAMPLER` | No | `always_on` | Sampling strategy |
+| `LAST9_EXCLUDED_PATHS` | No | `/health,/healthz,...` | Exact paths to exclude from tracing |
+| `LAST9_EXCLUDED_PATH_PREFIXES` | No | - | Path prefixes to exclude from tracing |
+| `LAST9_EXCLUDED_PATH_PATTERNS` | No | `/*/health,/*/healthz,...` | Glob patterns to exclude from tracing |
 
 ### Resource Attributes
 
