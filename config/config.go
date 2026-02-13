@@ -31,6 +31,21 @@ type Config struct {
 
 	// ResourceAttributes contains additional resource attributes
 	ResourceAttributes []attribute.KeyValue
+
+	// ExcludedPaths is a list of exact URL paths to exclude from tracing (from LAST9_EXCLUDED_PATHS).
+	// Default: /health,/healthz,/metrics,/ready,/live,/ping
+	// Set LAST9_EXCLUDED_PATHS="" to disable defaults.
+	ExcludedPaths []string
+
+	// ExcludedPathPrefixes is a list of URL path prefixes to exclude from tracing (from LAST9_EXCLUDED_PATH_PREFIXES).
+	// Default: none
+	ExcludedPathPrefixes []string
+
+	// ExcludedPathPatterns is a list of glob patterns to exclude from tracing (from LAST9_EXCLUDED_PATH_PATTERNS).
+	// Uses path.Match semantics (not filepath.Match).
+	// Default: /*/health,/*/healthz,/*/metrics,/*/ready,/*/live,/*/ping
+	// Set LAST9_EXCLUDED_PATH_PATTERNS="" to disable defaults.
+	ExcludedPathPatterns []string
 }
 
 // Load reads configuration from environment variables.
@@ -51,6 +66,20 @@ func Load() *Config {
 	cfg.ResourceAttributes, cfg.Environment, cfg.ServiceVersion = parseResourceAttributes(
 		os.Getenv("OTEL_RESOURCE_ATTRIBUTES"),
 		cfg.ServiceVersion,
+	)
+
+	// Parse route exclusion configuration
+	cfg.ExcludedPaths = parseCommaSeparatedWithDefault(
+		"LAST9_EXCLUDED_PATHS",
+		"/health,/healthz,/metrics,/ready,/live,/ping",
+	)
+	cfg.ExcludedPathPrefixes = parseCommaSeparatedWithDefault(
+		"LAST9_EXCLUDED_PATH_PREFIXES",
+		"",
+	)
+	cfg.ExcludedPathPatterns = parseCommaSeparatedWithDefault(
+		"LAST9_EXCLUDED_PATH_PATTERNS",
+		"/*/health,/*/healthz,/*/metrics,/*/ready,/*/live,/*/ping",
 	)
 
 	// Validate configuration
@@ -114,6 +143,28 @@ func parseResourceAttributes(attrsStr string, serviceVersion string) ([]attribut
 	}
 
 	return attrs, environment, serviceVersion
+}
+
+// parseCommaSeparatedWithDefault reads an env var and splits it by comma.
+// If the env var is not set, defaultVal is used. If the env var is explicitly
+// set to "", an empty slice is returned (opt-out of defaults).
+func parseCommaSeparatedWithDefault(envKey, defaultVal string) []string {
+	raw, ok := os.LookupEnv(envKey)
+	if !ok {
+		raw = defaultVal
+	}
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.TrimSpace(p); v != "" {
+			result = append(result, v)
+		}
+	}
+	return result
 }
 
 // getEnvOrDefault returns the environment variable value or a default

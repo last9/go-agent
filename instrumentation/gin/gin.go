@@ -2,6 +2,8 @@
 package gin
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/last9/go-agent"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -80,7 +82,16 @@ func Middleware() gin.HandlerFunc {
 	if cfg != nil {
 		serviceName = cfg.ServiceName
 	}
-	return otelgin.Middleware(serviceName)
+
+	opts := []otelgin.Option{}
+	rm := agent.GetRouteMatcher()
+	if !rm.IsEmpty() {
+		opts = append(opts, otelgin.WithFilter(func(r *http.Request) bool {
+			return !rm.ShouldExclude(r.URL.Path)
+		}))
+	}
+
+	return otelgin.Middleware(serviceName, opts...)
 }
 
 // setupInstrumentation adds Last9 telemetry to a Gin engine

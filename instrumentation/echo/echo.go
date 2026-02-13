@@ -50,7 +50,15 @@ func Middleware() echo.MiddlewareFunc {
 		serviceName = cfg.ServiceName
 	}
 
-	return otelecho.Middleware(serviceName)
+	opts := []otelecho.Option{}
+	rm := agent.GetRouteMatcher()
+	if !rm.IsEmpty() {
+		opts = append(opts, otelecho.WithSkipper(func(c echo.Context) bool {
+			return rm.ShouldExclude(c.Request().URL.Path)
+		}))
+	}
+
+	return otelecho.Middleware(serviceName, opts...)
 }
 
 // setupInstrumentation adds Last9 telemetry to an Echo instance

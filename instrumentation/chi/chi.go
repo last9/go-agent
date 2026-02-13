@@ -74,8 +74,22 @@ func Middleware(router *chi.Mux) func(next http.Handler) http.Handler {
 
 	return otelchi.Middleware(
 		serviceName,
-		otelchi.WithChiRoutes(router),
+		buildOptions(router)...,
 	)
+}
+
+// buildOptions returns otelchi options with route info and optional filter.
+func buildOptions(router *chi.Mux) []otelchi.Option {
+	opts := []otelchi.Option{
+		otelchi.WithChiRoutes(router),
+	}
+	rm := agent.GetRouteMatcher()
+	if !rm.IsEmpty() {
+		opts = append(opts, otelchi.WithFilter(func(r *http.Request) bool {
+			return !rm.ShouldExclude(r.URL.Path)
+		}))
+	}
+	return opts
 }
 
 // ensureAgentStarted starts the agent if not already initialized
@@ -110,7 +124,7 @@ func Use(router *chi.Mux) http.Handler {
 
 	middleware := otelchi.Middleware(
 		serviceName,
-		otelchi.WithChiRoutes(router),
+		buildOptions(router)...,
 	)
 	return middleware(router)
 }
