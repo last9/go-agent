@@ -38,6 +38,73 @@ var (
 	once        sync.Once
 )
 
+// Option is a functional option for configuring the agent.
+// Options override environment variable values.
+type Option func(*config.Config)
+
+// WithServiceName sets the service name, overriding OTEL_SERVICE_NAME.
+func WithServiceName(name string) Option {
+	return func(cfg *config.Config) {
+		cfg.ServiceName = name
+	}
+}
+
+// WithServiceVersion sets the service version, overriding OTEL_SERVICE_VERSION.
+func WithServiceVersion(version string) Option {
+	return func(cfg *config.Config) {
+		cfg.ServiceVersion = version
+	}
+}
+
+// WithEnvironment sets the deployment environment, overriding the value
+// from OTEL_RESOURCE_ATTRIBUTES deployment.environment.
+func WithEnvironment(env string) Option {
+	return func(cfg *config.Config) {
+		cfg.Environment = env
+	}
+}
+
+// WithEndpoint sets the OTLP endpoint, overriding OTEL_EXPORTER_OTLP_ENDPOINT.
+func WithEndpoint(endpoint string) Option {
+	return func(cfg *config.Config) {
+		cfg.Endpoint = endpoint
+	}
+}
+
+// WithHeaders sets OTLP exporter headers (e.g., Authorization),
+// overriding OTEL_EXPORTER_OTLP_HEADERS.
+func WithHeaders(headers map[string]string) Option {
+	return func(cfg *config.Config) {
+		cfg.Headers = headers
+	}
+}
+
+// WithSamplingRate sets the trace sampling rate (0.0 to 1.0).
+// This is a convenience option that configures the appropriate sampler:
+//   - 0.0 = sample no traces (always_off)
+//   - 1.0 = sample all traces (always_on)
+//   - 0.0 < rate < 1.0 = sample that fraction of traces (traceidratio)
+//
+// Overrides OTEL_TRACES_SAMPLER and OTEL_TRACES_SAMPLER_ARG.
+func WithSamplingRate(rate float64) Option {
+	return func(cfg *config.Config) {
+		if rate < 0 || rate > 1 {
+			log.Printf("[Last9 Agent] Warning: Invalid sampling rate %f (must be 0.0-1.0), ignoring", rate)
+			return
+		}
+		if rate == 0 {
+			cfg.Sampler = "always_off"
+			return
+		}
+		if rate >= 1.0 {
+			cfg.Sampler = "always_on"
+			return
+		}
+		cfg.Sampler = "traceidratio"
+		cfg.SamplerRatio = rate
+	}
+}
+
 // Agent represents the Last9 telemetry agent
 type Agent struct {
 	config         *config.Config
@@ -46,14 +113,10 @@ type Agent struct {
 	shutdown       func(context.Context) error
 }
 
-// Start initializes the Last9 agent with configuration from environment variables.
-// It sets up OpenTelemetry tracing and metrics exporters configured for Last9.
+// Start initializes the Last9 agent with configuration from environment variables,
+// optionally overridden by functional options.
 //
-// Initialization Behavior:
-//   - Uses context.Background() for exporter initialization (no cancellation support)
-//   - Initialization typically completes in <100ms
-//   - If initialization takes too long, the process will be blocked
-//   - For custom timeout/cancellation, configure exporters manually
+// Configuration priority: environment variables (base) < functional options (override).
 //
 // Environment variables:
 //   - OTEL_EXPORTER_OTLP_ENDPOINT: Last9 OTLP endpoint (optional for development)
@@ -61,23 +124,31 @@ type Agent struct {
 //   - OTEL_SERVICE_NAME: Service name (default: "unknown-service")
 //   - OTEL_RESOURCE_ATTRIBUTES: Additional resource attributes as key=value pairs
 //   - OTEL_TRACES_SAMPLER: Trace sampling strategy (default: "always_on")
-//     Supported: always_on, always_off, traceidratio, parentbased_always_on,
-//     parentbased_always_off, parentbased_traceidratio
 //   - OTEL_TRACES_SAMPLER_ARG: Sampling ratio for traceidratio samplers (default: "1.0")
-//     Must be between 0.0 and 1.0 (e.g., "0.1" for 10% sampling)
 //
-// Example:
+// Example with environment variables only:
 //
-//	export OTEL_EXPORTER_OTLP_ENDPOINT="https://otlp.last9.io"
-//	export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic <your-token>"
-//	export OTEL_SERVICE_NAME="my-service"
+//	agent.Start()
+//
+// Example with functional options:
+//
+//	agent.Start(
+//	    agent.WithServiceName("my-service"),
+//	    agent.WithEndpoint("https://otlp.last9.io"),
+//	    agent.WithSamplingRate(0.1),
+//	)
 //
 // Start must be called before any instrumentation is used.
 // It's safe to call multiple times - only the first call has effect.
-func Start() error {
+func Start(opts ...Option) error {
 	var err error
 	once.Do(func() {
 		cfg := config.Load()
+
+		// Apply functional options (override env var values)
+		for _, opt := range opts {
+			opt(cfg)
+		}
 
 		// Create resource
 		res, resErr := createResource(cfg)
@@ -214,7 +285,7 @@ func initTracerProvider(res *resource.Resource, cfg *config.Config) (*sdktrace.T
 	}
 
 	// Create sampler based on configuration
-	sampler := createSampler(cfg.Sampler)
+	sampler := createSampler(cfg)
 
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
@@ -225,7 +296,7 @@ func initTracerProvider(res *resource.Resource, cfg *config.Config) (*sdktrace.T
 	return tp, nil
 }
 
-// createSampler creates an OpenTelemetry sampler based on the sampler name.
+// createSampler creates an OpenTelemetry sampler based on the config.
 // Supports all standard OpenTelemetry samplers:
 //   - always_on: Sample all traces (default)
 //   - always_off: Sample no traces
@@ -233,24 +304,30 @@ func initTracerProvider(res *resource.Resource, cfg *config.Config) (*sdktrace.T
 //   - parentbased_always_on: Always sample if parent is sampled, otherwise always sample
 //   - parentbased_always_off: Always sample if parent is sampled, otherwise never sample
 //   - parentbased_traceidratio: Always sample if parent is sampled, otherwise use ratio
-func createSampler(samplerName string) sdktrace.Sampler {
-	switch samplerName {
+func createSampler(cfg *config.Config) sdktrace.Sampler {
+	switch cfg.Sampler {
 	case "always_off":
 		return sdktrace.NeverSample()
 	case "traceidratio":
-		ratio := parseSamplerRatio(os.Getenv("OTEL_TRACES_SAMPLER_ARG"))
+		ratio := cfg.SamplerRatio
+		if ratio == 0 {
+			ratio = parseSamplerRatio(os.Getenv("OTEL_TRACES_SAMPLER_ARG"))
+		}
 		return sdktrace.TraceIDRatioBased(ratio)
 	case "parentbased_always_on":
 		return sdktrace.ParentBased(sdktrace.AlwaysSample())
 	case "parentbased_always_off":
 		return sdktrace.ParentBased(sdktrace.NeverSample())
 	case "parentbased_traceidratio":
-		ratio := parseSamplerRatio(os.Getenv("OTEL_TRACES_SAMPLER_ARG"))
+		ratio := cfg.SamplerRatio
+		if ratio == 0 {
+			ratio = parseSamplerRatio(os.Getenv("OTEL_TRACES_SAMPLER_ARG"))
+		}
 		return sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))
 	case "always_on", "":
 		return sdktrace.AlwaysSample()
 	default:
-		log.Printf("[Last9 Agent] Warning: Unknown sampler %q, using always_on", samplerName)
+		log.Printf("[Last9 Agent] Warning: Unknown sampler %q, using always_on", cfg.Sampler)
 		return sdktrace.AlwaysSample()
 	}
 }
