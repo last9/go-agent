@@ -256,6 +256,108 @@ func TestSetDefault_SetsGlobalLogger(t *testing.T) {
 	}
 }
 
+func TestHandler_ConcurrentHandleCalls(t *testing.T) {
+	ctx, _, cleanup := startSpan(t)
+	defer cleanup()
+
+	var buf bytes.Buffer
+	h := slogagent.NewJSONHandler(&buf, nil, nil)
+	logger := slog.New(h)
+
+	const goroutines = 50
+	done := make(chan struct{})
+	for i := range goroutines {
+		go func(n int) {
+			defer func() { done <- struct{}{} }()
+			logger.InfoContext(ctx, "concurrent", "n", n)
+		}(i)
+	}
+	for range goroutines {
+		<-done
+	}
+
+	// Each goroutine wrote one JSON line. Verify we got all of them and
+	// none are corrupted (valid JSON with trace_id present).
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != goroutines {
+		t.Fatalf("expected %d log lines, got %d", goroutines, len(lines))
+	}
+	for i, line := range lines {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("line %d: invalid JSON: %v\nraw: %s", i, err, line)
+		}
+		if _, ok := entry["trace_id"]; !ok {
+			t.Errorf("line %d: missing trace_id", i)
+		}
+		if _, ok := entry["span_id"]; !ok {
+			t.Errorf("line %d: missing span_id", i)
+		}
+	}
+}
+
+func TestHandler_DeeplyNestedWithAttrsAndGroups(t *testing.T) {
+	ctx, _, cleanup := startSpan(t)
+	defer cleanup()
+
+	var buf bytes.Buffer
+	h := slogagent.NewJSONHandler(&buf, nil, nil)
+
+	// Build a chain: WithGroup("a") → WithAttrs(service) → WithGroup("b")
+	nested := h.WithGroup("a").
+		WithAttrs([]slog.Attr{slog.String("service", "test-svc")}).
+		WithGroup("b")
+
+	slog.New(nested).InfoContext(ctx, "deep", "key", "val")
+
+	output := buf.String()
+	// The groups and attrs must all appear.
+	for _, want := range []string{"trace_id", "span_id", `"a"`, `"b"`, `"service"`, `"test-svc"`, `"key"`, `"val"`} {
+		if !strings.Contains(output, want) {
+			t.Errorf("expected %s in output, got: %s", want, output)
+		}
+	}
+}
+
+func TestHandler_MultipleCallsDifferentContexts(t *testing.T) {
+	// Create two independent spans with distinct trace/span IDs.
+	tp := sdktrace.NewTracerProvider()
+	otel.SetTracerProvider(tp)
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	ctx1, span1 := tp.Tracer("test").Start(context.Background(), "span-1")
+	defer span1.End()
+	ctx2, span2 := tp.Tracer("test").Start(context.Background(), "span-2")
+	defer span2.End()
+
+	sc1 := trace.SpanContextFromContext(ctx1)
+	sc2 := trace.SpanContextFromContext(ctx2)
+
+	// Log with ctx1, then ctx2, then ctx1 again — IDs must match their context each time.
+	calls := []struct {
+		ctx context.Context
+		sc  trace.SpanContext
+	}{
+		{ctx1, sc1},
+		{ctx2, sc2},
+		{ctx1, sc1},
+	}
+
+	for i, c := range calls {
+		var buf bytes.Buffer
+		h := slogagent.NewJSONHandler(&buf, nil, nil)
+		slog.New(h).InfoContext(c.ctx, "msg")
+
+		entry := parseJSON(t, &buf)
+		if got := entry["trace_id"]; got != c.sc.TraceID().String() {
+			t.Errorf("call %d: trace_id = %q, want %q", i, got, c.sc.TraceID().String())
+		}
+		if got := entry["span_id"]; got != c.sc.SpanID().String() {
+			t.Errorf("call %d: span_id = %q, want %q", i, got, c.sc.SpanID().String())
+		}
+	}
+}
+
 func TestHandler_UserAttrs_Preserved(t *testing.T) {
 	ctx, _, cleanup := startSpan(t)
 	defer cleanup()
