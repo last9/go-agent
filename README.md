@@ -10,6 +10,7 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 - [Quick Start](#-sdk-quick-start-this-repo)
 - [Framework Support](#-framework-support) - net/http • Gin • Chi • Echo • Gorilla • gRPC-Gateway
 - [Database Support](#️-database-support) - PostgreSQL • MySQL • SQLite
+- [MongoDB Support](#-mongodb-support)
 - [Redis Support](#-redis-support)
 - [Kafka Support](#-kafka-support) - Producers • Consumers
 - [HTTP Client](#-http-client-support)
@@ -23,8 +24,8 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 
 - 🚀 **One-line initialization** - `agent.Start()` replaces 80-150 lines of OpenTelemetry setup code
 - 🔌 **Drop-in replacements** - Minimal code changes for Gin, Echo, Gorilla, gRPC-Gateway (Chi requires wrapper)
-- 🎯 **Auto-instrumentation** - HTTP, gRPC, SQL, Redis, Kafka automatically traced with proper span nesting
-- 📊 **Automatic metrics** - Runtime (memory, GC, goroutines), HTTP, gRPC, database, Kafka, Redis metrics out-of-the-box
+- 🎯 **Auto-instrumentation** - HTTP, gRPC, SQL, MongoDB, Redis, Kafka automatically traced with proper span nesting
+- 📊 **Automatic metrics** - Runtime (memory, GC, goroutines), HTTP, gRPC, database, MongoDB, Kafka, Redis metrics out-of-the-box
 - 📈 **Custom metrics** - Simple helpers for counters, histograms, gauges for business metrics
 - ⚙️ **Environment-based config** - Uses standard OpenTelemetry environment variables (no hardcoded config)
 - 🔍 **Complete observability** - Full distributed tracing + metrics across all layers (HTTP → gRPC → DB → External APIs)
@@ -53,6 +54,7 @@ The agent provides comprehensive telemetry including:
 |----------|-----------|---------|
 | **Web Frameworks** | net/http, Gin, Chi, Echo, Gorilla Mux, gRPC-Gateway | Latest stable |
 | **Databases** | PostgreSQL, MySQL, SQLite | Any version |
+| **MongoDB** | MongoDB (mongo-driver v1) | v1.11+ |
 | **Message Queues** | Kafka (IBM Sarama) | 2.6.0+ |
 | **Caching** | Redis (go-redis) | v9 |
 | **OpenTelemetry** | OTLP/HTTP (traces), OTLP/gRPC (metrics) | 1.39.0 |
@@ -310,6 +312,64 @@ db := database.MustOpen(database.Config{
 defer db.Close()
 ```
 
+## 🍃 MongoDB Support
+
+```go
+import mongoagent "github.com/last9/go-agent/integrations/mongodb"
+```
+
+### Option 1: New Client (recommended)
+
+```go
+client, err := mongoagent.NewClient(mongoagent.Config{
+    URI: "mongodb://localhost:27017/mydb",
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Disconnect(context.Background())
+
+// Use normally - all operations are automatically traced!
+col := client.Database("mydb").Collection("users")
+col.InsertOne(ctx, bson.M{"name": "Alice", "age": 30})
+```
+
+### Option 2: Instrument existing options
+
+```go
+opts := options.Client().ApplyURI(os.Getenv("MONGO_URI"))
+opts.SetAuth(options.Credential{Username: "admin", Password: "secret"})
+
+client, err := mongoagent.Instrument(opts)
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Disconnect(context.Background())
+```
+
+**What gets traced:**
+- All CRUD operations (`insert`, `find`, `update`, `delete`)
+- Aggregation pipelines
+- Index operations (`createIndexes`)
+- `getMore` cursor operations
+
+**What gets skipped** (noise reduction):
+- `hello`, `isMaster`, `ping` (connection housekeeping)
+- `saslStart`, `saslContinue`, `authenticate` (auth handshakes)
+- `endSessions`
+
+**Span attributes** (per [OTel DB semantic conventions](https://opentelemetry.io/docs/specs/semconv/database/database-spans/)):
+- `db.system` = `mongodb`
+- `db.name` - Database name
+- `db.operation` - Command name (e.g., `find`, `insert`)
+- `db.mongodb.collection` - Target collection
+- `server.address`, `server.port` - Connection info
+
+**Automatic metrics:**
+- `db.mongodb.operations` - Operation count
+- `db.mongodb.errors` - Error count
+- `db.mongodb.operation.duration` - Duration histogram (ms)
+
 ## 🔴 Redis Support
 
 ```go
@@ -449,6 +509,11 @@ All integrations collect metrics automatically - no additional code needed:
 - `db.client.connections.wait_time` - Time to acquire connection
 - `db.client.connections.use_time` - Connection usage duration
 - `db.client.connections.idle_time` - Connection idle duration
+
+#### MongoDB Metrics (Automatic)
+- `db.mongodb.operations` - Number of MongoDB operations executed
+- `db.mongodb.errors` - Number of failed MongoDB operations
+- `db.mongodb.operation.duration` - Duration of MongoDB operations (ms)
 
 #### Kafka Metrics (Automatic)
 - `messaging.kafka.messages.sent` - Messages produced
@@ -648,6 +713,7 @@ The agent automatically captures:
 - ✅ HTTP requests (endpoint, method, status code, duration)
 - ✅ gRPC calls (service, method, status code)
 - ✅ Database queries (query, duration, rows affected)
+- ✅ MongoDB operations (insert, find, update, delete, aggregate)
 - ✅ Redis commands (command, duration)
 - ✅ Kafka messages (topic, partition, offset, context propagation)
 - ✅ External API calls (URL, method, status code)
@@ -658,6 +724,7 @@ The agent automatically captures:
 - ✅ **Runtime**: Go memory (heap alloc), goroutines, GC cycles/pause times, CPU time
 - ✅ **HTTP/gRPC**: Request duration, request/response sizes, active requests, RPC latency
 - ✅ **Database**: Connection pool (usage, idle, max, wait/use/idle times)
+- ✅ **MongoDB**: Operations count, errors, operation duration
 - ✅ **Kafka**: Messages sent/received, errors, send/process duration, message sizes
 - ✅ **Redis**: Pool usage, command duration, operation counts
 
