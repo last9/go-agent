@@ -4,6 +4,7 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -11,26 +12,14 @@ import (
 
 // Config holds the agent configuration
 type Config struct {
-	// Headers contains additional headers for OTLP requests (from OTEL_EXPORTER_OTLP_HEADERS)
-	Headers map[string]string
-
-	// ServiceName is the name of the service (from OTEL_SERVICE_NAME)
-	ServiceName string
-
-	// ServiceVersion is the version of the service (from OTEL_SERVICE_VERSION or service.version in OTEL_RESOURCE_ATTRIBUTES)
-	ServiceVersion string
-
-	// Environment is the deployment environment (from OTEL_RESOURCE_ATTRIBUTES or defaults to "production")
-	Environment string
-
-	// Endpoint is the OTLP endpoint (from OTEL_EXPORTER_OTLP_ENDPOINT)
-	Endpoint string
-
-	// Sampler is the trace sampling strategy (from OTEL_TRACES_SAMPLER)
-	Sampler string
-
-	// ResourceAttributes contains additional resource attributes
+	Headers            map[string]string
+	ServiceName        string
+	ServiceVersion     string
+	Environment        string
+	Endpoint           string
+	Sampler            string
 	ResourceAttributes []attribute.KeyValue
+	SampleRate         float64
 }
 
 // Load reads configuration from environment variables.
@@ -45,6 +34,7 @@ func Load() *Config {
 		Endpoint:       os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 		Headers:        parseHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
 		Sampler:        getEnvOrDefault("OTEL_TRACES_SAMPLER", "always_on"),
+		SampleRate:     parseSampleRate(os.Getenv("LAST9_TRACE_SAMPLE_RATE")),
 	}
 
 	// Parse resource attributes
@@ -122,4 +112,19 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// parseSampleRate parses LAST9_TRACE_SAMPLE_RATE into a float64.
+// Returns -1 when the env var is empty (unset), so callers can distinguish
+// "not configured" from "configured as 0.0" (sample nothing).
+func parseSampleRate(raw string) float64 {
+	if raw == "" {
+		return -1 // unset
+	}
+	rate, err := strconv.ParseFloat(raw, 64)
+	if err != nil || rate < 0 || rate > 1 {
+		log.Printf("[Last9 Agent] Warning: Invalid LAST9_TRACE_SAMPLE_RATE %q (must be 0.0–1.0), ignoring", raw)
+		return -1
+	}
+	return rate
 }
