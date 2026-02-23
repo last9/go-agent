@@ -118,7 +118,7 @@ func NewClient(cfg Config) (*mongo.Client, error) {
 
 	if !agent.IsInitialized() {
 		if err := agent.Start(); err != nil {
-			return nil, fmt.Errorf("mongodb.NewClient: failed to initialize Last9 agent: %w", err)
+			log.Printf("[Last9 Agent] Warning: Failed to auto-start agent for MongoDB instrumentation: %v", err)
 		}
 	}
 
@@ -171,16 +171,19 @@ func Instrument(opts *options.ClientOptions) (*mongo.Client, error) {
 func connectWithMonitor(opts *options.ClientOptions, baseAttrs []attribute.KeyValue) (*mongo.Client, error) {
 	m, err := newMonitor(baseAttrs)
 	if err != nil {
-		log.Printf("[Last9 Agent] Warning: Failed to create MongoDB monitor: %v (client will not be instrumented)", err)
+		log.Printf("[Last9 Agent] Warning: partial MongoDB monitor setup: %v", err)
 	}
 
-	cmdMonitor := m.commandMonitor()
+	// If monitor creation failed entirely, connect without instrumentation.
+	if m != nil {
+		cmdMonitor := m.commandMonitor()
 
-	// Chain with any existing monitor the caller may have set.
-	if opts.Monitor != nil {
-		cmdMonitor = chainMonitors(opts.Monitor, cmdMonitor)
+		// Chain with any existing monitor the caller may have set.
+		if opts.Monitor != nil {
+			cmdMonitor = chainMonitors(opts.Monitor, cmdMonitor)
+		}
+		opts.SetMonitor(cmdMonitor)
 	}
-	opts.SetMonitor(cmdMonitor)
 
 	client, err := mongo.Connect(context.Background(), opts)
 	if err != nil {
@@ -323,7 +326,7 @@ func (m *monitor) recordMetrics(ctx context.Context, operation string, isError b
 	attrs = append(attrs, m.baseAttrs...)
 	metricOpts := metric.WithAttributes(attrs...)
 
-	durationMS := float64(elapsed.Milliseconds())
+	durationMS := float64(elapsed.Nanoseconds()) / 1e6
 
 	if m.operationCount != nil {
 		m.operationCount.Add(ctx, 1, metricOpts)
