@@ -156,6 +156,59 @@ func TestCreateSampler(t *testing.T) {
 	}
 }
 
+func TestSampleRateOverridesSampler(t *testing.T) {
+	defer Reset()
+
+	// Set LAST9_TRACE_SAMPLE_RATE — should override OTEL_TRACES_SAMPLER
+	os.Setenv("OTEL_SERVICE_NAME", "test-service")
+	os.Setenv("OTEL_TRACES_SAMPLER", "always_off") // would sample nothing
+	os.Setenv("LAST9_TRACE_SAMPLE_RATE", "1.0")    // overrides to sample everything
+	defer os.Unsetenv("OTEL_SERVICE_NAME")
+	defer os.Unsetenv("OTEL_TRACES_SAMPLER")
+	defer os.Unsetenv("LAST9_TRACE_SAMPLE_RATE")
+
+	err := Start()
+	if err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+
+	cfg := GetConfig()
+	if cfg == nil {
+		t.Fatal("GetConfig() should return non-nil after Start()")
+	}
+	// SampleRate should be set and take precedence
+	if cfg.SampleRate != 1.0 {
+		t.Errorf("Expected SampleRate=1.0, got %v", cfg.SampleRate)
+	}
+	// The Sampler field still reflects OTEL_TRACES_SAMPLER, but it's overridden at runtime
+	if cfg.Sampler != "always_off" {
+		t.Errorf("Expected Sampler='always_off', got %q", cfg.Sampler)
+	}
+}
+
+func TestSampleRateUnsetFallsBackToSampler(t *testing.T) {
+	defer Reset()
+
+	os.Setenv("OTEL_SERVICE_NAME", "test-service")
+	os.Setenv("OTEL_TRACES_SAMPLER", "always_off")
+	os.Unsetenv("LAST9_TRACE_SAMPLE_RATE")
+	defer os.Unsetenv("OTEL_SERVICE_NAME")
+	defer os.Unsetenv("OTEL_TRACES_SAMPLER")
+
+	err := Start()
+	if err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+
+	cfg := GetConfig()
+	if cfg.SampleRate != -1 {
+		t.Errorf("Expected SampleRate=-1 (unset), got %v", cfg.SampleRate)
+	}
+	if cfg.Sampler != "always_off" {
+		t.Errorf("Expected Sampler='always_off', got %q", cfg.Sampler)
+	}
+}
+
 func TestParseSamplerRatio(t *testing.T) {
 	tests := []struct {
 		input string
