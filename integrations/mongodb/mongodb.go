@@ -169,9 +169,9 @@ func Instrument(opts *options.ClientOptions) (*mongo.Client, error) {
 // connectWithMonitor creates the OTel monitor, injects it into the client
 // options, and calls mongo.Connect.
 func connectWithMonitor(opts *options.ClientOptions, baseAttrs []attribute.KeyValue) (*mongo.Client, error) {
-	m, err := newMonitor(baseAttrs)
-	if err != nil {
-		log.Printf("[Last9 Agent] Warning: partial MongoDB monitor setup: %v", err)
+	m, monitorErr := newMonitor(baseAttrs)
+	if monitorErr != nil {
+		log.Printf("[Last9 Agent] Warning: partial MongoDB monitor setup: %v", monitorErr)
 	}
 
 	// If monitor creation failed entirely, connect without instrumentation.
@@ -189,7 +189,9 @@ func connectWithMonitor(opts *options.ClientOptions, baseAttrs []attribute.KeyVa
 	if err != nil {
 		return nil, fmt.Errorf("mongodb: failed to connect: %w", err)
 	}
-	return client, nil
+	// Return the client even if monitor setup partially failed, but surface
+	// the error so callers can decide how to handle it (matching Redis pattern).
+	return client, monitorErr
 }
 
 // newMonitor creates a monitor with OTel tracer and metric instruments.
