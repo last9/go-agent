@@ -14,6 +14,7 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 - [Redis Support](#-redis-support)
 - [Kafka Support](#-kafka-support) - Producers • Consumers
 - [HTTP Client](#-http-client-support)
+- [Log-Trace Correlation](#-log-trace-correlation-zap) - zap
 - [Metrics Support](#-metrics-support) - Automatic • Custom • Runtime
 - [Configuration](#️-configuration)
 - [Requirements & Compatibility](#-requirements--compatibility)
@@ -52,6 +53,7 @@ The agent provides comprehensive telemetry including:
 ### Supported Frameworks & Libraries
 | Category | Supported | Version |
 |----------|-----------|---------|
+| **Logging** | zap (Uber) | v1.27+ |
 | **Web Frameworks** | net/http, Gin, Chi, Echo, Gorilla Mux, gRPC-Gateway | Latest stable |
 | **Databases** | PostgreSQL, MySQL, SQLite | Any version |
 | **MongoDB** | MongoDB (mongo-driver v1) | v1.11+ |
@@ -478,6 +480,95 @@ ctx = httptrace.WithClientTrace(ctx, otelhttptrace.NewClientTrace(ctx))
 req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.example.com/data", nil)
 resp, err := client.Do(req)
 ```
+
+## 📝 Log-Trace Correlation (zap)
+
+Automatically inject `trace_id` and `span_id` into your zap log entries for log-trace correlation.
+
+### Quick Setup — `TraceFields` helper
+
+The simplest way to add trace correlation to existing zap code. No wrapper needed:
+
+```go
+import (
+    "go.uber.org/zap"
+    zapagent "github.com/last9/go-agent/instrumentation/zap"
+)
+
+// Add trace fields to any log call
+logger.Info("request handled",
+    zap.String("path", r.URL.Path),
+    zapagent.TraceFields(ctx)...,
+)
+// Output: {"level":"info","msg":"request handled","path":"/api","trace_id":"abc...","span_id":"def..."}
+```
+
+### Logger Wrapper — `*Context` methods
+
+For a drop-in experience with dedicated context-aware methods:
+
+```go
+import (
+    "go.uber.org/zap"
+    zapagent "github.com/last9/go-agent/instrumentation/zap"
+)
+
+func main() {
+    agent.Start()
+    defer agent.Shutdown()
+
+    base, _ := zap.NewProduction()
+    logger := zapagent.New(base, nil)
+
+    // Use *Context methods — trace_id and span_id are injected automatically
+    logger.InfoContext(ctx, "user created", zap.String("user_id", "42"))
+    logger.ErrorContext(ctx, "payment failed", zap.Error(err))
+}
+```
+
+### Chaining with `With` and `Named`
+
+```go
+// Pre-set fields are preserved alongside trace fields
+reqLogger := logger.With(zap.String("service", "api"))
+reqLogger.InfoContext(ctx, "started")
+
+// Named loggers work too
+subLogger := logger.Named("auth")
+subLogger.WarnContext(ctx, "token expiring")
+```
+
+### Custom Attribute Keys
+
+```go
+logger := zapagent.New(base, &zapagent.Options{
+    TraceKey: "dd.trace_id",
+    SpanKey:  "dd.span_id",
+})
+```
+
+### How It Works
+
+Unlike `log/slog` where `Handle(ctx, record)` receives context directly, zap's `Core.Write(entry, fields)` has no `context.Context` parameter. The go-agent solves this with two approaches:
+
+1. **`TraceFields(ctx)`** — extracts span context and returns `[]zap.Field` that you spread into any log call
+2. **`Logger` wrapper** — provides `InfoContext`, `ErrorContext`, etc. that extract trace fields internally before delegating to the base `*zap.Logger`
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│ Your Code       │────▶│ zapagent.Logger   │────▶│ *zap.Logger      │
+│                 │     │                   │     │                  │
+│ l.InfoContext(  │     │ extract trace_id  │     │ Info(msg,        │
+│   ctx,          │     │ + span_id from    │     │   ...fields,     │
+│   "msg",        │     │ ctx, append to    │     │   trace_id,      │
+│   fields...,    │     │ fields            │     │   span_id)       │
+│ )               │     │                   │     │                  │
+└─────────────────┘     └──────────────────┘     └──────────────────┘
+```
+
+### Important: Context Propagation
+
+Trace fields are only injected when a valid OpenTelemetry span exists in the context. Make sure your HTTP framework middleware (Gin, Chi, Echo, etc.) is setting up spans, and that you pass the request context through to your log calls.
 
 ## 📊 Metrics Support
 
