@@ -14,6 +14,7 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 - [Redis Support](#-redis-support)
 - [Kafka Support](#-kafka-support) - Producers • Consumers
 - [HTTP Client](#-http-client-support)
+- [Log-Trace Correlation](#-log-trace-correlation) - Automatic trace_id/span_id injection for slog
 - [Metrics Support](#-metrics-support) - Automatic • Custom • Runtime
 - [Configuration](#️-configuration)
 - [Requirements & Compatibility](#-requirements--compatibility)
@@ -28,6 +29,7 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 - 📊 **Automatic metrics** - Runtime (memory, GC, goroutines), HTTP, gRPC, database, MongoDB, Kafka, Redis metrics out-of-the-box
 - 📈 **Custom metrics** - Simple helpers for counters, histograms, gauges for business metrics
 - ⚙️ **Environment-based config** - Uses standard OpenTelemetry environment variables (no hardcoded config)
+- 🔗 **Log-trace correlation** - Automatic `trace_id`/`span_id` injection into `log/slog` log entries
 - 🔍 **Complete observability** - Full distributed tracing + metrics across all layers (HTTP → gRPC → DB → External APIs)
 
 ## 📋 Requirements & Compatibility
@@ -57,6 +59,7 @@ The agent provides comprehensive telemetry including:
 | **MongoDB** | MongoDB (mongo-driver v1) | v1.11+ |
 | **Message Queues** | Kafka (IBM Sarama) | 2.6.0+ |
 | **Caching** | Redis (go-redis) | v9 |
+| **Logging** | log/slog (trace correlation) | Go 1.21+ (stdlib) |
 | **OpenTelemetry** | OTLP/HTTP (traces), OTLP/gRPC (metrics) | 1.39.0 |
 
 ### OpenTelemetry Specifications
@@ -479,6 +482,114 @@ req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.example.com/data",
 resp, err := client.Do(req)
 ```
 
+## 🔗 Log-Trace Correlation
+
+Automatically inject `trace_id` and `span_id` into your `log/slog` log entries, enabling you to jump from a log line to its associated trace and vice versa.
+
+### Quick Setup
+
+```go
+import (
+    "log/slog"
+    "os"
+
+    "github.com/last9/go-agent"
+    slogagent "github.com/last9/go-agent/instrumentation/slog"
+)
+
+func main() {
+    agent.Start()
+    defer agent.Shutdown()
+
+    // One-line setup: sets the global slog logger with trace correlation
+    slogagent.SetDefault(os.Stdout, nil, nil)
+
+    // All slog calls with context now include trace_id and span_id
+    slog.InfoContext(ctx, "processing request", "user_id", 42)
+    // Output: {"time":"...","level":"INFO","msg":"processing request","user_id":42,"trace_id":"abc123...","span_id":"def456..."}
+}
+```
+
+### Wrap an Existing Handler
+
+```go
+// Wrap any slog.Handler — works with JSON, text, or third-party handlers
+base := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+handler := slogagent.NewHandler(base, nil)
+logger := slog.New(handler)
+
+logger.InfoContext(ctx, "order created", "order_id", "abc-123")
+```
+
+### Convenience Constructors
+
+```go
+// JSON handler (most common)
+handler := slogagent.NewJSONHandler(os.Stdout, nil, nil)
+
+// Text handler
+handler := slogagent.NewTextHandler(os.Stdout, nil, nil)
+```
+
+### Custom Attribute Keys
+
+Some backends expect different field names. Use `Options` to customize:
+
+```go
+handler := slogagent.NewJSONHandler(os.Stdout, nil, &slogagent.Options{
+    TraceKey: "dd.trace_id",  // Datadog-style
+    SpanKey:  "dd.span_id",
+})
+```
+
+### How It Works
+
+The handler wraps your existing `slog.Handler` and intercepts each log record. When the `context.Context` passed to `slog.InfoContext` (or `ErrorContext`, `WarnContext`, etc.) contains an active OpenTelemetry span, the handler injects `trace_id` and `span_id` as log attributes before delegating to your inner handler.
+
+```
+slog.InfoContext(ctx, "msg")
+        │
+        ▼
+  slogagent.Handler.Handle(ctx, record)
+        │
+        ├── trace.SpanContextFromContext(ctx)
+        ├── sc.IsValid()? → inject trace_id + span_id
+        │
+        ▼
+  inner handler (JSON/text/custom) writes enriched log
+```
+
+- Logs **without** a span context pass through unchanged (no trace fields added)
+- Logs **with** a span context get `trace_id` (32 hex chars) and `span_id` (16 hex chars) appended
+- Sampled-out spans still get their IDs injected (useful for correlating unsampled traces)
+
+### Important: Use `*Context` Methods
+
+Go has no thread-local storage, so trace correlation **requires** passing `context.Context` explicitly. Use the `*Context` variants of slog methods:
+
+```go
+// These WILL have trace correlation:
+slog.InfoContext(ctx, "with trace")
+slog.ErrorContext(ctx, "with trace")
+logger.InfoContext(ctx, "with trace")
+
+// These will NOT (no context = no span = no trace IDs):
+slog.Info("no trace correlation")
+logger.Error("no trace correlation")
+```
+
+### What About the Standard `log` Package?
+
+The standard `log` package (`log.Println`, `log.Printf`) does not support `context.Context` and **cannot** have trace correlation — this is a Go language constraint, not a library limitation. The recommended migration path:
+
+```go
+// Before (no correlation possible)
+log.Printf("processing order %s", orderID)
+
+// After (automatic correlation)
+slog.InfoContext(ctx, "processing order", "order_id", orderID)
+```
+
 ## 📊 Metrics Support
 
 The agent automatically collects metrics for all integrated services and provides helpers for custom metrics.
@@ -719,6 +830,7 @@ The agent automatically captures:
 - ✅ External API calls (URL, method, status code)
 - ✅ Errors and exceptions
 - ✅ Distributed trace context propagation
+- ✅ Log-trace correlation (trace_id/span_id injection into slog)
 
 ### Automatic Metrics:
 - ✅ **Runtime**: Go memory (heap alloc), goroutines, GC cycles/pause times, CPU time
