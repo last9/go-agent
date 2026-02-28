@@ -274,6 +274,9 @@ func (m *monitor) started(ctx context.Context, evt *event.CommandStartedEvent) {
 	if collection != "" {
 		attrs = append(attrs, semconv.DBMongoDBCollection(collection))
 	}
+	if statement := sanitizedCommandString(evt.Command); statement != "" {
+		attrs = append(attrs, semconv.DBStatement(statement))
+	}
 	attrs = append(attrs, m.baseAttrs...)
 
 	_, span := m.tracer.Start(ctx, spanName,
@@ -469,6 +472,24 @@ func splitHostPort(hostport string) (host, port string) {
 		return hostport[:idx], hostport[idx+1:]
 	}
 	return hostport, ""
+}
+
+// maxStatementLength is the maximum byte length for db.statement values.
+// Larger commands (e.g., bulk inserts) are truncated to avoid bloating spans.
+const maxStatementLength = 4096
+
+// sanitizedCommandString converts a BSON command document to a string
+// suitable for the db.statement span attribute. The output is truncated
+// if it exceeds maxStatementLength.
+func sanitizedCommandString(command bson.Raw) string {
+	if len(command) == 0 {
+		return ""
+	}
+	s := command.String()
+	if len(s) > maxStatementLength {
+		return s[:maxStatementLength] + "..."
+	}
+	return s
 }
 
 // chainMonitors creates a CommandMonitor that calls both a and b for each event.
