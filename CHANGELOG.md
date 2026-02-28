@@ -5,6 +5,12 @@ All notable changes to the Last9 Go Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`database.ParseDSNAttributes(dsn, driver)`** — public helper that parses a DSN and returns OTel semantic convention attributes (`server.address`, `server.port`, `db.user`, `db.name`). Useful for stamping connection attributes onto manually created wrapper spans, where `database.Open()` auto-attributes (injected via otelsql) are not inherited. Supports `postgres`, `pgx`, `mysql`, `sqlite`, `sqlite3`, and generic URL-style DSNs.
+
 ## [0.1.0] - 2025-01-01
 
 ### Added
