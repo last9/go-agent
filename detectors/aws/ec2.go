@@ -23,9 +23,8 @@ const (
 // EC2Detector detects EC2 instance metadata and tags using IMDSv2.
 // It implements the resource.Detector interface.
 type EC2Detector struct {
-	// endpoint overrides the IMDS base URL (for testing)
-	endpoint string
 	client   *http.Client
+	endpoint string
 }
 
 // NewEC2Detector creates a detector that fetches EC2 instance metadata

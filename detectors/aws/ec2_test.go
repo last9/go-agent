@@ -47,14 +47,14 @@ func fakeIMDS(metadata map[string]string) http.Handler {
 
 func TestDetect_FullMetadataAndTags(t *testing.T) {
 	srv := httptest.NewServer(fakeIMDS(map[string]string{
-		"/latest/meta-data/instance-id":              "i-0abc123def456",
+		"/latest/meta-data/instance-id":                 "i-0abc123def456",
 		"/latest/meta-data/placement/availability-zone": "us-east-1a",
-		"/latest/meta-data/instance-type":             "m5.xlarge",
-		"/latest/meta-data/hostname":                  "ip-10-0-1-42.ec2.internal",
-		"/latest/meta-data/tags/instance":             "Name\napp\nteam",
-		"/latest/meta-data/tags/instance/Name":        "my-service-prod",
-		"/latest/meta-data/tags/instance/app":         "my-service",
-		"/latest/meta-data/tags/instance/team":        "platform",
+		"/latest/meta-data/instance-type":               "m5.xlarge",
+		"/latest/meta-data/hostname":                    "ip-10-0-1-42.ec2.internal",
+		"/latest/meta-data/tags/instance":               "Name\napp\nteam",
+		"/latest/meta-data/tags/instance/Name":          "my-service-prod",
+		"/latest/meta-data/tags/instance/app":           "my-service",
+		"/latest/meta-data/tags/instance/team":          "platform",
 	}))
 	defer srv.Close()
 
@@ -71,15 +71,15 @@ func TestDetect_FullMetadataAndTags(t *testing.T) {
 	}
 
 	expected := map[attribute.Key]string{
-		semconv.CloudProviderKey:        "aws",
-		semconv.CloudRegionKey:          "us-east-1",
+		semconv.CloudProviderKey:         "aws",
+		semconv.CloudRegionKey:           "us-east-1",
 		semconv.CloudAvailabilityZoneKey: "us-east-1a",
-		semconv.HostIDKey:               "i-0abc123def456",
-		semconv.HostTypeKey:             "m5.xlarge",
-		semconv.HostNameKey:             "ip-10-0-1-42.ec2.internal",
-		"ec2.tag.Name":                  "my-service-prod",
-		"ec2.tag.app":                   "my-service",
-		"ec2.tag.team":                  "platform",
+		semconv.HostIDKey:                "i-0abc123def456",
+		semconv.HostTypeKey:              "m5.xlarge",
+		semconv.HostNameKey:              "ip-10-0-1-42.ec2.internal",
+		"ec2.tag.Name":                   "my-service-prod",
+		"ec2.tag.app":                    "my-service",
+		"ec2.tag.team":                   "platform",
 	}
 
 	for key, want := range expected {
@@ -96,10 +96,10 @@ func TestDetect_FullMetadataAndTags(t *testing.T) {
 
 func TestDetect_NoTags(t *testing.T) {
 	srv := httptest.NewServer(fakeIMDS(map[string]string{
-		"/latest/meta-data/instance-id":              "i-0abc123def456",
+		"/latest/meta-data/instance-id":                 "i-0abc123def456",
 		"/latest/meta-data/placement/availability-zone": "eu-west-1b",
-		"/latest/meta-data/instance-type":             "t3.micro",
-		"/latest/meta-data/hostname":                  "ip-10-0-1-1.ec2.internal",
+		"/latest/meta-data/instance-type":               "t3.micro",
+		"/latest/meta-data/hostname":                    "ip-10-0-1-1.ec2.internal",
 		// No tags/instance endpoint — simulates tags not enabled
 	}))
 	defer srv.Close()
