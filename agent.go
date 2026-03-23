@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/last9/go-agent/config"
-	awsdetector "github.com/last9/go-agent/detectors/aws"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -64,8 +63,6 @@ type Agent struct {
 //   - LAST9_TRACE_SAMPLE_RATE: Simple probabilistic sampling ratio (0.0 to 1.0).
 //     Maps to parentbased_traceidratio. Takes precedence over OTEL_TRACES_SAMPLER.
 //     Example: "0.5" samples 50% of new traces while respecting parent decisions.
-//   - LAST9_CLOUD_RESOURCE_DETECTION: Cloud provider for resource detection.
-//     Set to "aws" to auto-detect EC2 instance metadata and tags via IMDSv2.
 //   - OTEL_TRACES_SAMPLER: Trace sampling strategy (default: "always_on")
 //     Supported: always_on, always_off, traceidratio, parentbased_always_on,
 //     parentbased_always_off, parentbased_traceidratio
@@ -202,11 +199,6 @@ func createResource(cfg *config.Config) (*resource.Resource, error) {
 		resource.WithContainer(),
 		resource.WithHost(),
 		resource.WithAttributes(baseAttrs...),
-	}
-
-	// Add cloud resource detection when configured
-	if cfg.CloudResourceDetection == "aws" {
-		attrs = append(attrs, resource.WithDetectors(awsdetector.NewEC2Detector()))
 	}
 
 	// Add custom attributes from config

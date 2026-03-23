@@ -12,15 +12,14 @@ import (
 
 // Config holds the agent configuration
 type Config struct {
-	Headers                map[string]string
-	ServiceName            string
-	ServiceVersion         string
-	Environment            string
-	Endpoint               string
-	Sampler                string
-	CloudResourceDetection string
-	ResourceAttributes     []attribute.KeyValue
-	SampleRate             float64
+	Headers            map[string]string
+	ServiceName        string
+	ServiceVersion     string
+	Environment        string
+	Endpoint           string
+	Sampler            string
+	ResourceAttributes []attribute.KeyValue
+	SampleRate         float64
 }
 
 // Load reads configuration from environment variables.
@@ -30,13 +29,12 @@ type Config struct {
 // or when using a custom exporter configuration.
 func Load() *Config {
 	cfg := &Config{
-		ServiceName:            getEnvOrDefault("OTEL_SERVICE_NAME", "unknown-service"),
-		ServiceVersion:         os.Getenv("OTEL_SERVICE_VERSION"),
-		Endpoint:               os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
-		Headers:                parseHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
-		Sampler:                getEnvOrDefault("OTEL_TRACES_SAMPLER", "always_on"),
-		SampleRate:             parseSampleRate(os.Getenv("LAST9_TRACE_SAMPLE_RATE")),
-		CloudResourceDetection: os.Getenv("LAST9_CLOUD_RESOURCE_DETECTION"),
+		ServiceName:    getEnvOrDefault("OTEL_SERVICE_NAME", "unknown-service"),
+		ServiceVersion: os.Getenv("OTEL_SERVICE_VERSION"),
+		Endpoint:       os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		Headers:        parseHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
+		Sampler:        getEnvOrDefault("OTEL_TRACES_SAMPLER", "always_on"),
+		SampleRate:     parseSampleRate(os.Getenv("LAST9_TRACE_SAMPLE_RATE")),
 	}
 
 	// Parse resource attributes
