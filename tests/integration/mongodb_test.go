@@ -14,6 +14,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/last9/go-agent"
@@ -103,6 +104,7 @@ func TestMongoDB_InsertFind(t *testing.T) {
 	testutil.AssertSpanAttribute(t, insertSpan, "db.operation", "insert")
 	testutil.AssertSpanAttribute(t, insertSpan, "db.mongodb.collection", "users")
 	testutil.AssertSpanAttribute(t, insertSpan, "db.name", "testdb")
+	assertSpanHasAttributeContaining(t, insertSpan, "db.statement", "insert")
 
 	// Verify find span
 	findSpan := testutil.FindSpanByName(spans, "find users")
@@ -111,6 +113,7 @@ func TestMongoDB_InsertFind(t *testing.T) {
 	testutil.AssertSpanAttribute(t, findSpan, "db.operation", "find")
 	testutil.AssertSpanAttribute(t, findSpan, "db.name", "testdb")
 	testutil.AssertSpanAttribute(t, findSpan, "db.mongodb.collection", "users")
+	assertSpanHasAttributeContaining(t, findSpan, "db.statement", "find")
 }
 
 func TestMongoDB_UpdateDelete(t *testing.T) {
@@ -278,6 +281,7 @@ func TestMongoDB_Aggregate(t *testing.T) {
 	testutil.AssertSpanAttribute(t, aggregateSpan, "db.operation", "aggregate")
 	testutil.AssertSpanAttribute(t, aggregateSpan, "db.mongodb.collection", "orders")
 	testutil.AssertSpanAttribute(t, aggregateSpan, "db.name", "testdb")
+	assertSpanHasAttributeContaining(t, aggregateSpan, "db.statement", "aggregate")
 }
 
 func TestMongoDB_SkippedCommands(t *testing.T) {
@@ -411,4 +415,19 @@ func TestMongoDB_InstrumentAPI(t *testing.T) {
 	require.NotNil(t, insertSpan, "Instrument() should produce traced spans")
 	testutil.AssertSpanAttribute(t, insertSpan, "db.system", "mongodb")
 	testutil.AssertSpanAttribute(t, insertSpan, "db.operation", "insert")
+}
+
+// assertSpanHasAttributeContaining verifies that a span has an attribute whose
+// value contains the given substring.
+func assertSpanHasAttributeContaining(t *testing.T, span sdktrace.ReadOnlySpan, key, substr string) {
+	t.Helper()
+	for _, attr := range span.Attributes() {
+		if string(attr.Key) == key {
+			val := attr.Value.AsString()
+			assert.Contains(t, val, substr,
+				"attribute %s should contain %q, got %q", key, substr, val)
+			return
+		}
+	}
+	t.Errorf("span %q does not have attribute %q", span.Name(), key)
 }
