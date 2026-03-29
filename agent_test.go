@@ -5,6 +5,8 @@ package agent
 import (
 	"os"
 	"testing"
+
+	"github.com/last9/go-agent/config"
 )
 
 func TestStart(t *testing.T) {
@@ -133,26 +135,178 @@ func TestShutdown(t *testing.T) {
 
 func TestCreateSampler(t *testing.T) {
 	tests := []struct {
-		name         string
-		samplerName  string
-		wantNil      bool
-		description  string
+		name        string
+		samplerName string
+		description string
 	}{
-		{"always_on", "always_on", false, "should create AlwaysSample sampler"},
-		{"always_off", "always_off", false, "should create NeverSample sampler"},
-		{"empty", "", false, "should default to AlwaysSample"},
-		{"traceidratio", "traceidratio", false, "should create TraceIDRatioBased sampler"},
-		{"parentbased_always_on", "parentbased_always_on", false, "should create ParentBased(AlwaysSample) sampler"},
-		{"unknown", "invalid_sampler", false, "should default to AlwaysSample with warning"},
+		{"always_on", "always_on", "should create AlwaysSample sampler"},
+		{"always_off", "always_off", "should create NeverSample sampler"},
+		{"empty", "", "should default to AlwaysSample"},
+		{"traceidratio", "traceidratio", "should create TraceIDRatioBased sampler"},
+		{"parentbased_always_on", "parentbased_always_on", "should create ParentBased(AlwaysSample) sampler"},
+		{"unknown", "invalid_sampler", "should default to AlwaysSample with warning"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sampler := createSampler(tt.samplerName)
+			cfg := &config.Config{Sampler: tt.samplerName}
+			sampler := createSampler(cfg)
 			if sampler == nil {
 				t.Errorf("createSampler(%q) returned nil, expected non-nil sampler", tt.samplerName)
 			}
 		})
+	}
+}
+
+func TestStartWithOptions(t *testing.T) {
+	defer Reset()
+
+	os.Setenv("OTEL_SERVICE_NAME", "env-service")
+	os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://env.example.com")
+	defer os.Unsetenv("OTEL_SERVICE_NAME")
+	defer os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+	err := Start(
+		WithServiceName("option-service"),
+		WithEnvironment("staging"),
+		WithEndpoint("https://option.example.com"),
+	)
+	if err != nil {
+		t.Fatalf("Start() with options failed: %v", err)
+	}
+
+	cfg := GetConfig()
+	if cfg.ServiceName != "option-service" {
+		t.Errorf("Expected ServiceName 'option-service', got '%s'", cfg.ServiceName)
+	}
+	if cfg.Environment != "staging" {
+		t.Errorf("Expected Environment 'staging', got '%s'", cfg.Environment)
+	}
+	if cfg.Endpoint != "https://option.example.com" {
+		t.Errorf("Expected Endpoint 'https://option.example.com', got '%s'", cfg.Endpoint)
+	}
+}
+
+func TestStartWithSamplingRate(t *testing.T) {
+	defer Reset()
+
+	err := Start(
+		WithServiceName("test-service"),
+		WithSamplingRate(0.25),
+	)
+	if err != nil {
+		t.Fatalf("Start() with sampling rate failed: %v", err)
+	}
+
+	cfg := GetConfig()
+	if cfg.Sampler != "traceidratio" {
+		t.Errorf("Expected Sampler 'traceidratio', got '%s'", cfg.Sampler)
+	}
+	if cfg.SamplerRatio != 0.25 {
+		t.Errorf("Expected SamplerRatio 0.25, got %f", cfg.SamplerRatio)
+	}
+}
+
+func TestStartWithSamplingRateEdgeCases(t *testing.T) {
+	tests := []struct {
+		name        string
+		rate        float64
+		wantSampler string
+		wantRatio   float64
+	}{
+		{"zero_is_always_off", 0.0, "always_off", 0},
+		{"one_is_always_on", 1.0, "always_on", 0},
+		{"fractional", 0.5, "traceidratio", 0.5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			Reset()
+			defer Reset()
+
+			err := Start(WithServiceName("test"), WithSamplingRate(tt.rate))
+			if err != nil {
+				t.Fatalf("Start() failed: %v", err)
+			}
+
+			cfg := GetConfig()
+			if cfg.Sampler != tt.wantSampler {
+				t.Errorf("Expected Sampler %q, got %q", tt.wantSampler, cfg.Sampler)
+			}
+			if cfg.SamplerRatio != tt.wantRatio {
+				t.Errorf("Expected SamplerRatio %f, got %f", tt.wantRatio, cfg.SamplerRatio)
+			}
+		})
+	}
+}
+
+func TestStartWithHeaders(t *testing.T) {
+	defer Reset()
+
+	headers := map[string]string{
+		"Authorization": "Basic test-token",
+		"X-Custom":      "value",
+	}
+
+	err := Start(
+		WithServiceName("test-service"),
+		WithHeaders(headers),
+	)
+	if err != nil {
+		t.Fatalf("Start() with headers failed: %v", err)
+	}
+
+	cfg := GetConfig()
+	if cfg.Headers["Authorization"] != "Basic test-token" {
+		t.Errorf("Expected Authorization header, got %v", cfg.Headers)
+	}
+	if cfg.Headers["X-Custom"] != "value" {
+		t.Errorf("Expected X-Custom header, got %v", cfg.Headers)
+	}
+}
+
+func TestStartBackwardCompatible(t *testing.T) {
+	defer Reset()
+
+	os.Setenv("OTEL_SERVICE_NAME", "env-service")
+	defer os.Unsetenv("OTEL_SERVICE_NAME")
+
+	err := Start()
+	if err != nil {
+		t.Fatalf("Start() without options failed: %v", err)
+	}
+
+	cfg := GetConfig()
+	if cfg.ServiceName != "env-service" {
+		t.Errorf("Expected ServiceName from env 'env-service', got '%s'", cfg.ServiceName)
+	}
+}
+
+func TestOptionsPreserveEnvDefaults(t *testing.T) {
+	defer Reset()
+
+	os.Setenv("OTEL_SERVICE_NAME", "env-service")
+	os.Setenv("OTEL_SERVICE_VERSION", "v1.0.0")
+	os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://env.example.com")
+	defer os.Unsetenv("OTEL_SERVICE_NAME")
+	defer os.Unsetenv("OTEL_SERVICE_VERSION")
+	defer os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+	// Override only service name — other env values should be preserved
+	err := Start(WithServiceName("option-service"))
+	if err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+
+	cfg := GetConfig()
+	if cfg.ServiceName != "option-service" {
+		t.Errorf("Expected ServiceName 'option-service', got '%s'", cfg.ServiceName)
+	}
+	if cfg.ServiceVersion != "v1.0.0" {
+		t.Errorf("Expected ServiceVersion 'v1.0.0' from env, got '%s'", cfg.ServiceVersion)
+	}
+	if cfg.Endpoint != "https://env.example.com" {
+		t.Errorf("Expected Endpoint from env, got '%s'", cfg.Endpoint)
 	}
 }
 
