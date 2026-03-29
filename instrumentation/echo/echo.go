@@ -50,7 +50,7 @@ func Middleware() echo.MiddlewareFunc {
 		serviceName = cfg.ServiceName
 	}
 
-	opts := []otelecho.Option{}
+	var opts []otelecho.Option
 	rm := agent.GetRouteMatcher()
 	if !rm.IsEmpty() {
 		opts = append(opts, otelecho.WithSkipper(func(c echo.Context) bool {

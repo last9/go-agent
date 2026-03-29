@@ -51,7 +51,7 @@ func Middleware() mux.MiddlewareFunc {
 		serviceName = cfg.ServiceName
 	}
 
-	opts := []otelmux.Option{}
+	var opts []otelmux.Option
 	rm := agent.GetRouteMatcher()
 	if !rm.IsEmpty() {
 		opts = append(opts, otelmux.WithFilter(func(r *http.Request) bool {

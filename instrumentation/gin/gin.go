@@ -83,7 +83,7 @@ func Middleware() gin.HandlerFunc {
 		serviceName = cfg.ServiceName
 	}
 
-	opts := []otelgin.Option{}
+	var opts []otelgin.Option
 	rm := agent.GetRouteMatcher()
 	if !rm.IsEmpty() {
 		opts = append(opts, otelgin.WithFilter(func(r *http.Request) bool {
