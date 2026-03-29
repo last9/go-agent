@@ -123,6 +123,9 @@ type Agent struct {
 //   - OTEL_EXPORTER_OTLP_HEADERS: Authorization header (required for production)
 //   - OTEL_SERVICE_NAME: Service name (default: "unknown-service")
 //   - OTEL_RESOURCE_ATTRIBUTES: Additional resource attributes as key=value pairs
+//   - LAST9_TRACE_SAMPLE_RATE: Simple probabilistic sampling ratio (0.0 to 1.0).
+//     Maps to parentbased_traceidratio. Takes precedence over OTEL_TRACES_SAMPLER.
+//     Example: "0.5" samples 50% of new traces while respecting parent decisions.
 //   - OTEL_TRACES_SAMPLER: Trace sampling strategy (default: "always_on")
 //   - OTEL_TRACES_SAMPLER_ARG: Sampling ratio for traceidratio samplers (default: "1.0")
 //
@@ -284,8 +287,15 @@ func initTracerProvider(res *resource.Resource, cfg *config.Config) (*sdktrace.T
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 	}
 
-	// Create sampler based on configuration
-	sampler := createSampler(cfg)
+	// LAST9_TRACE_SAMPLE_RATE takes precedence over all other sampler config.
+	// It maps directly to parentbased_traceidratio for simplicity.
+	var sampler sdktrace.Sampler
+	if cfg.SampleRate >= 0 {
+		sampler = sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.SampleRate))
+		log.Printf("[Last9 Agent] Using LAST9_TRACE_SAMPLE_RATE=%.4f (parentbased_traceidratio)", cfg.SampleRate)
+	} else {
+		sampler = createSampler(cfg)
+	}
 
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
