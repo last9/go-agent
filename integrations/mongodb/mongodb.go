@@ -469,7 +469,6 @@ func sanitizedCommandString(command bson.Raw) string {
 	return s
 }
 
-
 // chainMonitors creates a CommandMonitor that calls both a and b for each event.
 func chainMonitors(a, b *event.CommandMonitor) *event.CommandMonitor {
 	return &event.CommandMonitor{
