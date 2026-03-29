@@ -3,10 +3,15 @@
 package agent
 
 import (
+	"context"
+	"net/http"
 	"os"
 	"testing"
 
 	"github.com/last9/go-agent/config"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestStart(t *testing.T) {
@@ -360,6 +365,116 @@ func TestSampleRateUnsetFallsBackToSampler(t *testing.T) {
 	}
 	if cfg.Sampler != "always_off" {
 		t.Errorf("Expected Sampler='always_off', got %q", cfg.Sampler)
+	}
+}
+
+func TestPropagatorInjectsB3MultiHeader(t *testing.T) {
+	defer Reset()
+	if err := Start(WithServiceName("test-service")); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+
+	ctx, span := otel.Tracer("test").Start(context.Background(), "op")
+	defer span.End()
+
+	headers := make(http.Header)
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(headers))
+
+	if headers.Get("X-B3-TraceId") == "" {
+		t.Error("X-B3-TraceId header not injected")
+	}
+	if headers.Get("X-B3-SpanId") == "" {
+		t.Error("X-B3-SpanId header not injected")
+	}
+	if headers.Get("X-B3-Sampled") == "" {
+		t.Error("X-B3-Sampled header not injected")
+	}
+}
+
+func TestPropagatorInjectsB3SingleHeader(t *testing.T) {
+	defer Reset()
+	if err := Start(WithServiceName("test-service")); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+
+	ctx, span := otel.Tracer("test").Start(context.Background(), "op")
+	defer span.End()
+
+	headers := make(http.Header)
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(headers))
+
+	if headers.Get("B3") == "" {
+		t.Error("B3 single-header not injected")
+	}
+}
+
+func TestPropagatorExtractsB3MultiHeader(t *testing.T) {
+	defer Reset()
+	if err := Start(WithServiceName("test-service")); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+
+	headers := http.Header{
+		"X-B3-Traceid": []string{"0af7651916cd43dd8448eb211c80319c"},
+		"X-B3-Spanid":  []string{"b7ad6b7169203331"},
+		"X-B3-Sampled": []string{"1"},
+	}
+
+	ctx := otel.GetTextMapPropagator().Extract(context.Background(), propagation.HeaderCarrier(headers))
+	sc := trace.SpanContextFromContext(ctx)
+
+	if !sc.IsValid() {
+		t.Fatal("extracted span context is not valid")
+	}
+	if sc.TraceID().String() != "0af7651916cd43dd8448eb211c80319c" {
+		t.Errorf("trace ID = %s, want 0af7651916cd43dd8448eb211c80319c", sc.TraceID())
+	}
+	if sc.SpanID().String() != "b7ad6b7169203331" {
+		t.Errorf("span ID = %s, want b7ad6b7169203331", sc.SpanID())
+	}
+}
+
+func TestPropagatorExtractsB3SingleHeader(t *testing.T) {
+	defer Reset()
+	if err := Start(WithServiceName("test-service")); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+
+	headers := http.Header{
+		// single-header format: {traceId}-{spanId}-{flags}
+		"B3": []string{"0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-1"},
+	}
+
+	ctx := otel.GetTextMapPropagator().Extract(context.Background(), propagation.HeaderCarrier(headers))
+	sc := trace.SpanContextFromContext(ctx)
+
+	if !sc.IsValid() {
+		t.Fatal("extracted span context from B3 single-header is not valid")
+	}
+	if sc.TraceID().String() != "0af7651916cd43dd8448eb211c80319c" {
+		t.Errorf("trace ID = %s, want 0af7651916cd43dd8448eb211c80319c", sc.TraceID())
+	}
+}
+
+func TestPropagatorW3CTakesPrecedenceOverB3(t *testing.T) {
+	defer Reset()
+	if err := Start(WithServiceName("test-service")); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+
+	// W3C traceparent with a different trace ID than the B3 header
+	headers := http.Header{
+		"Traceparent":  []string{"00-11111111111111111111111111111111-aaaaaaaaaaaaaaaa-01"},
+		"X-B3-Traceid": []string{"22222222222222222222222222222222"},
+		"X-B3-Spanid":  []string{"bbbbbbbbbbbbbbbb"},
+		"X-B3-Sampled": []string{"1"},
+	}
+
+	ctx := otel.GetTextMapPropagator().Extract(context.Background(), propagation.HeaderCarrier(headers))
+	sc := trace.SpanContextFromContext(ctx)
+
+	if sc.TraceID().String() != "11111111111111111111111111111111" {
+		t.Errorf("W3C should take precedence: trace ID = %s, want 11111111111111111111111111111111", sc.TraceID())
 	}
 }
 

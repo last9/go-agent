@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/last9/go-agent/config"
+	"go.opentelemetry.io/contrib/propagators/b3"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -175,8 +176,12 @@ func Start(opts ...Option) error {
 		otel.SetMeterProvider(mp)
 		otel.SetTextMapPropagator(
 			propagation.NewCompositeTextMapPropagator(
-				propagation.TraceContext{},
+				// B3 first so W3C (listed last) overwrites it on extract —
+				// W3C traceparent takes precedence when both header formats are present.
+				// All three propagators inject on every outgoing request.
+				b3.New(b3.WithInjectEncoding(b3.B3MultipleHeader|b3.B3SingleHeader)),
 				propagation.Baggage{},
+				propagation.TraceContext{},
 			),
 		)
 
