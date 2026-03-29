@@ -2,13 +2,16 @@
 package database
 
 import (
+	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
 
 	"go.nhat.io/otelsql"
+	sqlattr "go.nhat.io/otelsql/attribute"
 	"go.opentelemetry.io/otel/attribute"
 	semconv "go.opentelemetry.io/otel/semconv/v1.25.0"
 )
@@ -26,6 +29,10 @@ type Config struct {
 
 	// Additional otelsql driver options
 	Options []otelsql.DriverOption
+
+	// IncludeQueryArgs, when true, includes the query argument values in spans.
+	// Disable in production environments that handle PII or sensitive data.
+	IncludeQueryArgs bool
 }
 
 // ParseDSNAttributes parses a database connection string and extracts
@@ -209,9 +216,11 @@ func Open(cfg Config) (*sql.DB, error) {
 	// Default driver options
 	opts := []otelsql.DriverOption{
 		otelsql.AllowRoot(),
-		otelsql.TraceQueryWithoutArgs(),
+		otelsql.TracePing(),
 		otelsql.TraceRowsClose(),
 		otelsql.TraceRowsAffected(),
+		otelsql.TraceQuery(buildQueryTracer(cfg.IncludeQueryArgs)),
+		otelsql.WithSpanNameFormatter(sqlSpanName),
 	}
 
 	// Add DSN-extracted attributes
@@ -256,6 +265,50 @@ func Open(cfg Config) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+// sqlSpanName formats span names as "<OPERATION> <table>" (e.g. "SELECT users")
+// when the query is parseable. Falls back to the raw otelsql method name
+// (e.g. "sql.query") when the query is unavailable or unrecognised.
+func sqlSpanName(ctx context.Context, op string) string {
+	query := otelsql.QueryFromContext(ctx)
+	if query == "" {
+		return op
+	}
+	operation, table := parseSQL(query)
+	if operation == "" {
+		return op
+	}
+	if table == "" {
+		return operation
+	}
+	return operation + " " + table
+}
+
+// buildQueryTracer returns an otelsql queryTracer that always stamps
+// db.statement, db.operation, and db.sql.table onto the span. Query argument
+// values are only included when includeArgs is true.
+func buildQueryTracer(includeArgs bool) func(ctx context.Context, query string, args []driver.NamedValue) []attribute.KeyValue {
+	return func(_ context.Context, query string, args []driver.NamedValue) []attribute.KeyValue {
+		operation, table := parseSQL(query)
+
+		attrs := make([]attribute.KeyValue, 0, 3+len(args))
+		attrs = append(attrs, semconv.DBStatementKey.String(query))
+		if operation != "" {
+			attrs = append(attrs, semconv.DBOperationKey.String(operation))
+		}
+		if table != "" {
+			attrs = append(attrs, semconv.DBSQLTableKey.String(table))
+		}
+
+		if includeArgs {
+			for _, arg := range args {
+				attrs = append(attrs, sqlattr.FromNamedValue(arg))
+			}
+		}
+
+		return attrs
+	}
 }
 
 // MustOpen is like Open but panics on error.
