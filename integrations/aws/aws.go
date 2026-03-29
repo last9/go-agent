@@ -35,8 +35,7 @@ type Option = otelaws.Option
 func InstrumentSDK(cfg *awsconfig.Config, opts ...Option) {
 	if !agent.IsInitialized() {
 		if err := agent.Start(); err != nil {
-			log.Printf("[Last9 Agent] Warning: failed to auto-start agent for AWS SDK instrumentation: %v (instrumentation will not be active)", err)
-			return
+			log.Printf("[Last9 Agent] Warning: Failed to auto-start agent for AWS SDK instrumentation: %v", err)
 		}
 	}
 	otelaws.AppendMiddlewares(&cfg.APIOptions, opts...)

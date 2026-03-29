@@ -270,12 +270,15 @@ func Open(cfg Config) (*sql.DB, error) {
 // sqlSpanName formats span names as "<OPERATION> <table>" (e.g. "SELECT users")
 // when the query is parseable. Falls back to the raw otelsql method name
 // (e.g. "sql.query") when the query is unavailable or unrecognised.
+// sqlSpanName formats span names as "<OPERATION> <table>" (e.g. "SELECT users")
+// when the query is parseable. Falls back to the raw otelsql method name
+// (e.g. "sql.query") when the query is unavailable or unrecognised.
 func sqlSpanName(ctx context.Context, op string) string {
 	query := otelsql.QueryFromContext(ctx)
 	if query == "" {
 		return op
 	}
-	operation, table := parseSQL(query)
+	operation, table := parseSQLCached(query)
 	if operation == "" {
 		return op
 	}
@@ -290,9 +293,13 @@ func sqlSpanName(ctx context.Context, op string) string {
 // values are only included when includeArgs is true.
 func buildQueryTracer(includeArgs bool) func(ctx context.Context, query string, args []driver.NamedValue) []attribute.KeyValue {
 	return func(_ context.Context, query string, args []driver.NamedValue) []attribute.KeyValue {
-		operation, table := parseSQL(query)
+		operation, table := parseSQLCached(query)
 
-		attrs := make([]attribute.KeyValue, 0, 3+len(args))
+		capacity := 3
+		if includeArgs {
+			capacity += len(args)
+		}
+		attrs := make([]attribute.KeyValue, 0, capacity)
 		attrs = append(attrs, semconv.DBStatementKey.String(query))
 		if operation != "" {
 			attrs = append(attrs, semconv.DBOperationKey.String(operation))

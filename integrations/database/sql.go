@@ -1,6 +1,32 @@
 package database
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
+
+// parsedSQL holds the cached result of a parseSQL call.
+type parsedSQL struct {
+	operation, table string
+}
+
+// parsedQueryCache avoids re-parsing the same query string on every execution.
+// SQL queries in a real application are a bounded, repeatedly-used set so
+// the map grows to a stable size and stays there.
+var parsedQueryCache sync.Map // map[string]*parsedSQL
+
+// parseSQLCached returns the same result as parseSQL but caches by query string,
+// eliminating redundant token-splitting on the per-request hot path.
+func parseSQLCached(query string) (string, string) {
+	if v, ok := parsedQueryCache.Load(query); ok {
+		if p, ok := v.(*parsedSQL); ok {
+			return p.operation, p.table
+		}
+	}
+	op, tbl := parseSQL(query)
+	parsedQueryCache.Store(query, &parsedSQL{op, tbl})
+	return op, tbl
+}
 
 // parseSQL extracts the SQL operation (verb) and primary table name from a
 // query string using lightweight token-based parsing — no grammar is involved.
