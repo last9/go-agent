@@ -19,11 +19,6 @@ type Config struct {
 	Endpoint           string
 	Sampler            string
 	ResourceAttributes []attribute.KeyValue
-	SampleRate         float64
-	// SamplerRatio is the sampling ratio for traceidratio samplers (0.0-1.0).
-	// Only used when Sampler is "traceidratio" or "parentbased_traceidratio".
-	// Set via WithSamplingRate() option. Zero value means use OTEL_TRACES_SAMPLER_ARG env var.
-	SamplerRatio float64
 
 	// ExcludedPaths is a list of exact URL paths to exclude from tracing (from LAST9_EXCLUDED_PATHS).
 	// Default: /health,/healthz,/metrics,/ready,/live,/ping
@@ -39,6 +34,12 @@ type Config struct {
 	// Default: /*/health,/*/healthz,/*/metrics,/*/ready,/*/live,/*/ping
 	// Set LAST9_EXCLUDED_PATH_PATTERNS="" to disable defaults.
 	ExcludedPathPatterns []string
+
+	SampleRate float64
+	// SamplerRatio is the sampling ratio for traceidratio samplers (0.0-1.0).
+	// Only used when Sampler is "traceidratio" or "parentbased_traceidratio".
+	// Set via WithSamplingRate() option. Zero value means use OTEL_TRACES_SAMPLER_ARG env var.
+	SamplerRatio float64
 }
 
 // Load reads configuration from environment variables.
