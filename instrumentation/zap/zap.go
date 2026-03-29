@@ -47,11 +47,8 @@ import (
 )
 
 const (
-	// defaultTraceKey is the log field key for the OTel trace ID.
 	defaultTraceKey = "trace_id"
-
-	// defaultSpanKey is the log field key for the OTel span ID.
-	defaultSpanKey = "span_id"
+	defaultSpanKey  = "span_id"
 )
 
 // Options configures the behavior of the Logger wrapper.
@@ -66,18 +63,36 @@ type Options struct {
 	SpanKey string
 }
 
-func (o *Options) resolvedTraceKey() string {
-	if o != nil && o.TraceKey != "" {
-		return o.TraceKey
+// resolveKey returns override if non-empty, otherwise fallback.
+func resolveKey(override, fallback string) string {
+	if override != "" {
+		return override
 	}
-	return defaultTraceKey
+	return fallback
+}
+
+func (o *Options) resolvedTraceKey() string {
+	if o == nil {
+		return defaultTraceKey
+	}
+	return resolveKey(o.TraceKey, defaultTraceKey)
 }
 
 func (o *Options) resolvedSpanKey() string {
-	if o != nil && o.SpanKey != "" {
-		return o.SpanKey
+	if o == nil {
+		return defaultSpanKey
 	}
-	return defaultSpanKey
+	return resolveKey(o.SpanKey, defaultSpanKey)
+}
+
+// extractTraceIDs returns the trace and span ID strings from ctx.
+// Returns ("", "") if no valid span context is present.
+func extractTraceIDs(ctx context.Context) (traceID, spanID string) {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return "", ""
+	}
+	return sc.TraceID().String(), sc.SpanID().String()
 }
 
 // TraceFields extracts the OTel span context from ctx and returns zap fields
@@ -90,15 +105,27 @@ func (o *Options) resolvedSpanKey() string {
 //	    zapagent.TraceFields(ctx)...,
 //	)
 //
-// For custom field key names, use the Logger wrapper with Options instead.
+// For custom field key names, use TraceFieldsWithOptions or the Logger wrapper.
 func TraceFields(ctx context.Context) []zap.Field {
-	sc := trace.SpanContextFromContext(ctx)
-	if !sc.IsValid() {
+	return TraceFieldsWithOptions(ctx, nil)
+}
+
+// TraceFieldsWithOptions extracts the OTel span context from ctx and returns
+// zap fields using the key names configured in opts. Returns nil if the span
+// context is not valid.
+//
+// Use this when you need custom field key names without the Logger wrapper:
+//
+//	opts := &zapagent.Options{TraceKey: "dd.trace_id", SpanKey: "dd.span_id"}
+//	logger.Info("request handled", zapagent.TraceFieldsWithOptions(ctx, opts)...)
+func TraceFieldsWithOptions(ctx context.Context, opts *Options) []zap.Field {
+	traceID, spanID := extractTraceIDs(ctx)
+	if traceID == "" {
 		return nil
 	}
 	return []zap.Field{
-		zap.String(defaultTraceKey, sc.TraceID().String()),
-		zap.String(defaultSpanKey, sc.SpanID().String()),
+		zap.String(opts.resolvedTraceKey(), traceID),
+		zap.String(opts.resolvedSpanKey(), spanID),
 	}
 }
 
@@ -134,15 +161,16 @@ func New(base *zap.Logger, opts *Options) *Logger {
 }
 
 // appendTraceFields returns fields with trace_id and span_id appended if a
-// valid span context exists in ctx. Allocates a new slice to avoid mutating
-// the caller's backing array.
+// valid span context exists in ctx. Uses make+copy on the non-empty path to
+// avoid mutating the caller's backing array.
 func (l *Logger) appendTraceFields(ctx context.Context, fields []zap.Field) []zap.Field {
-	sc := trace.SpanContextFromContext(ctx)
-	if !sc.IsValid() {
+	traceID, spanID := extractTraceIDs(ctx)
+	if traceID == "" {
 		return fields
 	}
-	traceField := zap.String(l.traceKey, sc.TraceID().String())
-	spanField := zap.String(l.spanKey, sc.SpanID().String())
+	traceField := zap.String(l.traceKey, traceID)
+	spanField := zap.String(l.spanKey, spanID)
+	// Fast path: no caller fields, skip make+copy overhead.
 	if len(fields) == 0 {
 		return []zap.Field{traceField, spanField}
 	}
@@ -214,25 +242,6 @@ func (l *Logger) Unwrap() *zap.Logger {
 	return l.base
 }
 
-// TraceFieldsWithOptions extracts the OTel span context from ctx and returns
-// zap fields using the key names configured in opts. Returns nil if the span
-// context is not valid.
-//
-// Use this when you need custom field key names without the Logger wrapper:
-//
-//	opts := &zapagent.Options{TraceKey: "dd.trace_id", SpanKey: "dd.span_id"}
-//	logger.Info("request handled", zapagent.TraceFieldsWithOptions(ctx, opts)...)
-func TraceFieldsWithOptions(ctx context.Context, opts *Options) []zap.Field {
-	sc := trace.SpanContextFromContext(ctx)
-	if !sc.IsValid() {
-		return nil
-	}
-	return []zap.Field{
-		zap.String(opts.resolvedTraceKey(), sc.TraceID().String()),
-		zap.String(opts.resolvedSpanKey(), sc.SpanID().String()),
-	}
-}
-
 // SugaredLogger wraps a *zap.SugaredLogger to provide *Context methods that
 // automatically inject OTel trace_id and span_id into every log entry.
 //
@@ -264,13 +273,20 @@ func NewSugared(base *zap.SugaredLogger, opts *Options) *SugaredLogger {
 }
 
 // appendTraceKVs returns keysAndValues with trace_id and span_id appended if a
-// valid span context exists in ctx.
+// valid span context exists in ctx. Uses make+copy to avoid mutating the
+// caller's backing array when the slice has spare capacity.
 func (l *SugaredLogger) appendTraceKVs(ctx context.Context, keysAndValues []any) []any {
-	sc := trace.SpanContextFromContext(ctx)
-	if !sc.IsValid() {
+	traceID, spanID := extractTraceIDs(ctx)
+	if traceID == "" {
 		return keysAndValues
 	}
-	return append(keysAndValues, l.traceKey, sc.TraceID().String(), l.spanKey, sc.SpanID().String())
+	// Fast path: no caller fields, skip make+copy overhead.
+	if len(keysAndValues) == 0 {
+		return []any{l.traceKey, traceID, l.spanKey, spanID}
+	}
+	result := make([]any, len(keysAndValues), len(keysAndValues)+4)
+	copy(result, keysAndValues)
+	return append(result, l.traceKey, traceID, l.spanKey, spanID)
 }
 
 // DebugwContext logs a message at DebugLevel with trace correlation.
