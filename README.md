@@ -10,10 +10,12 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 - [Quick Start](#-sdk-quick-start-this-repo)
 - [Framework Support](#-framework-support) - net/http • Gin • Chi • Echo • Gorilla • gRPC-Gateway
 - [Database Support](#️-database-support) - PostgreSQL • MySQL • SQLite
+- [MongoDB Support](#-mongodb-support)
 - [Redis Support](#-redis-support)
 - [Kafka Support](#-kafka-support) - Producers • Consumers
 - [HTTP Client](#-http-client-support)
-- [Log-Trace Correlation](#-log-trace-correlation-zap) - zap
+- [Log-Trace Correlation (zap)](#-log-trace-correlation-zap) - zap
+- [Log-Trace Correlation (slog)](#-log-trace-correlation) - slog
 - [Metrics Support](#-metrics-support) - Automatic • Custom • Runtime
 - [Configuration](#️-configuration)
 - [Requirements & Compatibility](#-requirements--compatibility)
@@ -24,10 +26,11 @@ A drop-in OpenTelemetry agent for Go applications that minimizes code changes wh
 
 - 🚀 **One-line initialization** - `agent.Start()` replaces 80-150 lines of OpenTelemetry setup code
 - 🔌 **Drop-in replacements** - Minimal code changes for Gin, Echo, Gorilla, gRPC-Gateway (Chi requires wrapper)
-- 🎯 **Auto-instrumentation** - HTTP, gRPC, SQL, Redis, Kafka automatically traced with proper span nesting
-- 📊 **Automatic metrics** - Runtime (memory, GC, goroutines), HTTP, gRPC, database, Kafka, Redis metrics out-of-the-box
+- 🎯 **Auto-instrumentation** - HTTP, gRPC, SQL, MongoDB, Redis, Kafka automatically traced with proper span nesting
+- 📊 **Automatic metrics** - Runtime (memory, GC, goroutines), HTTP, gRPC, database, MongoDB, Kafka, Redis metrics out-of-the-box
 - 📈 **Custom metrics** - Simple helpers for counters, histograms, gauges for business metrics
 - ⚙️ **Environment-based config** - Uses standard OpenTelemetry environment variables (no hardcoded config)
+- 🔗 **Log-trace correlation** - Automatic `trace_id`/`span_id` injection into `log/slog` log entries
 - 🔍 **Complete observability** - Full distributed tracing + metrics across all layers (HTTP → gRPC → DB → External APIs)
 
 ## 📋 Requirements & Compatibility
@@ -55,8 +58,10 @@ The agent provides comprehensive telemetry including:
 | **Logging** | zap (Uber) | v1.27+ |
 | **Web Frameworks** | net/http, Gin, Chi, Echo, Gorilla Mux, gRPC-Gateway | Latest stable |
 | **Databases** | PostgreSQL, MySQL, SQLite | Any version |
+| **MongoDB** | MongoDB (mongo-driver v1) | v1.11+ |
 | **Message Queues** | Kafka (IBM Sarama) | 2.6.0+ |
 | **Caching** | Redis (go-redis) | v9 |
+| **Logging** | log/slog (trace correlation) | Go 1.21+ (stdlib) |
 | **OpenTelemetry** | OTLP/HTTP (traces), OTLP/gRPC (metrics) | 1.39.0 |
 
 ### OpenTelemetry Specifications
@@ -312,6 +317,64 @@ db := database.MustOpen(database.Config{
 defer db.Close()
 ```
 
+## 🍃 MongoDB Support
+
+```go
+import mongoagent "github.com/last9/go-agent/integrations/mongodb"
+```
+
+### Option 1: New Client (recommended)
+
+```go
+client, err := mongoagent.NewClient(mongoagent.Config{
+    URI: "mongodb://localhost:27017/mydb",
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Disconnect(context.Background())
+
+// Use normally - all operations are automatically traced!
+col := client.Database("mydb").Collection("users")
+col.InsertOne(ctx, bson.M{"name": "Alice", "age": 30})
+```
+
+### Option 2: Instrument existing options
+
+```go
+opts := options.Client().ApplyURI(os.Getenv("MONGO_URI"))
+opts.SetAuth(options.Credential{Username: "admin", Password: "secret"})
+
+client, err := mongoagent.Instrument(opts)
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Disconnect(context.Background())
+```
+
+**What gets traced:**
+- All CRUD operations (`insert`, `find`, `update`, `delete`)
+- Aggregation pipelines
+- Index operations (`createIndexes`)
+- `getMore` cursor operations
+
+**What gets skipped** (noise reduction):
+- `hello`, `isMaster`, `ping` (connection housekeeping)
+- `saslStart`, `saslContinue`, `authenticate` (auth handshakes)
+- `endSessions`
+
+**Span attributes** (per [OTel DB semantic conventions](https://opentelemetry.io/docs/specs/semconv/database/database-spans/)):
+- `db.system` = `mongodb`
+- `db.name` - Database name
+- `db.operation` - Command name (e.g., `find`, `insert`)
+- `db.mongodb.collection` - Target collection
+- `server.address`, `server.port` - Connection info
+
+**Automatic metrics:**
+- `db.mongodb.operations` - Operation count
+- `db.mongodb.errors` - Error count
+- `db.mongodb.operation.duration` - Duration histogram (ms)
+
 ## 🔴 Redis Support
 
 ```go
@@ -510,6 +573,114 @@ Unlike `log/slog` where `Handle(ctx, record)` receives context directly, zap's `
 
 Trace fields are only injected when a valid OpenTelemetry span exists in the context. Make sure your HTTP framework middleware (Gin, Chi, Echo, etc.) is setting up spans, and that you pass the request context through to your log calls.
 
+## 🔗 Log-Trace Correlation
+
+Automatically inject `trace_id` and `span_id` into your `log/slog` log entries, enabling you to jump from a log line to its associated trace and vice versa.
+
+### Quick Setup
+
+```go
+import (
+    "log/slog"
+    "os"
+
+    "github.com/last9/go-agent"
+    slogagent "github.com/last9/go-agent/instrumentation/slog"
+)
+
+func main() {
+    agent.Start()
+    defer agent.Shutdown()
+
+    // One-line setup: sets the global slog logger with trace correlation
+    slogagent.SetDefault(os.Stdout, nil, nil)
+
+    // All slog calls with context now include trace_id and span_id
+    slog.InfoContext(ctx, "processing request", "user_id", 42)
+    // Output: {"time":"...","level":"INFO","msg":"processing request","user_id":42,"trace_id":"abc123...","span_id":"def456..."}
+}
+```
+
+### Wrap an Existing Handler
+
+```go
+// Wrap any slog.Handler — works with JSON, text, or third-party handlers
+base := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+handler := slogagent.NewHandler(base, nil)
+logger := slog.New(handler)
+
+logger.InfoContext(ctx, "order created", "order_id", "abc-123")
+```
+
+### Convenience Constructors
+
+```go
+// JSON handler (most common)
+handler := slogagent.NewJSONHandler(os.Stdout, nil, nil)
+
+// Text handler
+handler := slogagent.NewTextHandler(os.Stdout, nil, nil)
+```
+
+### Custom Attribute Keys
+
+Some backends expect different field names. Use `Options` to customize:
+
+```go
+handler := slogagent.NewJSONHandler(os.Stdout, nil, &slogagent.Options{
+    TraceKey: "dd.trace_id",  // Datadog-style
+    SpanKey:  "dd.span_id",
+})
+```
+
+### How It Works
+
+The handler wraps your existing `slog.Handler` and intercepts each log record. When the `context.Context` passed to `slog.InfoContext` (or `ErrorContext`, `WarnContext`, etc.) contains an active OpenTelemetry span, the handler injects `trace_id` and `span_id` as log attributes before delegating to your inner handler.
+
+```
+slog.InfoContext(ctx, "msg")
+        │
+        ▼
+  slogagent.Handler.Handle(ctx, record)
+        │
+        ├── trace.SpanContextFromContext(ctx)
+        ├── sc.IsValid()? → inject trace_id + span_id
+        │
+        ▼
+  inner handler (JSON/text/custom) writes enriched log
+```
+
+- Logs **without** a span context pass through unchanged (no trace fields added)
+- Logs **with** a span context get `trace_id` (32 hex chars) and `span_id` (16 hex chars) appended
+- Sampled-out spans still get their IDs injected (useful for correlating unsampled traces)
+
+### Important: Use `*Context` Methods
+
+Go has no thread-local storage, so trace correlation **requires** passing `context.Context` explicitly. Use the `*Context` variants of slog methods:
+
+```go
+// These WILL have trace correlation:
+slog.InfoContext(ctx, "with trace")
+slog.ErrorContext(ctx, "with trace")
+logger.InfoContext(ctx, "with trace")
+
+// These will NOT (no context = no span = no trace IDs):
+slog.Info("no trace correlation")
+logger.Error("no trace correlation")
+```
+
+### What About the Standard `log` Package?
+
+The standard `log` package (`log.Println`, `log.Printf`) does not support `context.Context` and **cannot** have trace correlation — this is a Go language constraint, not a library limitation. The recommended migration path:
+
+```go
+// Before (no correlation possible)
+log.Printf("processing order %s", orderID)
+
+// After (automatic correlation)
+slog.InfoContext(ctx, "processing order", "order_id", orderID)
+```
+
 ## 📊 Metrics Support
 
 The agent automatically collects metrics for all integrated services and provides helpers for custom metrics.
@@ -540,6 +711,11 @@ All integrations collect metrics automatically - no additional code needed:
 - `db.client.connections.wait_time` - Time to acquire connection
 - `db.client.connections.use_time` - Connection usage duration
 - `db.client.connections.idle_time` - Connection idle duration
+
+#### MongoDB Metrics (Automatic)
+- `db.mongodb.operations` - Number of MongoDB operations executed
+- `db.mongodb.errors` - Number of failed MongoDB operations
+- `db.mongodb.operation.duration` - Duration of MongoDB operations (ms)
 
 #### Kafka Metrics (Automatic)
 - `messaging.kafka.messages.sent` - Messages produced
@@ -739,16 +915,19 @@ The agent automatically captures:
 - ✅ HTTP requests (endpoint, method, status code, duration)
 - ✅ gRPC calls (service, method, status code)
 - ✅ Database queries (query, duration, rows affected)
+- ✅ MongoDB operations (insert, find, update, delete, aggregate)
 - ✅ Redis commands (command, duration)
 - ✅ Kafka messages (topic, partition, offset, context propagation)
 - ✅ External API calls (URL, method, status code)
 - ✅ Errors and exceptions
 - ✅ Distributed trace context propagation
+- ✅ Log-trace correlation (trace_id/span_id injection into slog)
 
 ### Automatic Metrics:
 - ✅ **Runtime**: Go memory (heap alloc), goroutines, GC cycles/pause times, CPU time
 - ✅ **HTTP/gRPC**: Request duration, request/response sizes, active requests, RPC latency
 - ✅ **Database**: Connection pool (usage, idle, max, wait/use/idle times)
+- ✅ **MongoDB**: Operations count, errors, operation duration
 - ✅ **Kafka**: Messages sent/received, errors, send/process duration, message sizes
 - ✅ **Redis**: Pool usage, command duration, operation counts
 
