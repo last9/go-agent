@@ -161,8 +161,9 @@ func New(base *zap.Logger, opts *Options) *Logger {
 }
 
 // appendTraceFields returns fields with trace_id and span_id appended if a
-// valid span context exists in ctx. Uses make+copy on the non-empty path to
-// avoid mutating the caller's backing array.
+// valid span context exists in ctx. When the caller passed fields, make+copy
+// is used to avoid clobbering spare capacity in the caller's backing array
+// (variadic slices share memory with the caller's original allocation).
 func (l *Logger) appendTraceFields(ctx context.Context, fields []zap.Field) []zap.Field {
 	traceID, spanID := extractTraceIDs(ctx)
 	if traceID == "" {
@@ -170,7 +171,6 @@ func (l *Logger) appendTraceFields(ctx context.Context, fields []zap.Field) []za
 	}
 	traceField := zap.String(l.traceKey, traceID)
 	spanField := zap.String(l.spanKey, spanID)
-	// Fast path: no caller fields, skip make+copy overhead.
 	if len(fields) == 0 {
 		return []zap.Field{traceField, spanField}
 	}
@@ -273,14 +273,14 @@ func NewSugared(base *zap.SugaredLogger, opts *Options) *SugaredLogger {
 }
 
 // appendTraceKVs returns keysAndValues with trace_id and span_id appended if a
-// valid span context exists in ctx. Uses make+copy to avoid mutating the
-// caller's backing array when the slice has spare capacity.
+// valid span context exists in ctx. When the caller passed keysAndValues,
+// make+copy is used to avoid clobbering spare capacity in the caller's backing
+// array (variadic slices share memory with the caller's original allocation).
 func (l *SugaredLogger) appendTraceKVs(ctx context.Context, keysAndValues []any) []any {
 	traceID, spanID := extractTraceIDs(ctx)
 	if traceID == "" {
 		return keysAndValues
 	}
-	// Fast path: no caller fields, skip make+copy overhead.
 	if len(keysAndValues) == 0 {
 		return []any{l.traceKey, traceID, l.spanKey, spanID}
 	}
