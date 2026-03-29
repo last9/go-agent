@@ -213,3 +213,122 @@ func (l *Logger) Named(name string) *Logger {
 func (l *Logger) Unwrap() *zap.Logger {
 	return l.base
 }
+
+// TraceFieldsWithOptions extracts the OTel span context from ctx and returns
+// zap fields using the key names configured in opts. Returns nil if the span
+// context is not valid.
+//
+// Use this when you need custom field key names without the Logger wrapper:
+//
+//	opts := &zapagent.Options{TraceKey: "dd.trace_id", SpanKey: "dd.span_id"}
+//	logger.Info("request handled", zapagent.TraceFieldsWithOptions(ctx, opts)...)
+func TraceFieldsWithOptions(ctx context.Context, opts *Options) []zap.Field {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return nil
+	}
+	return []zap.Field{
+		zap.String(opts.resolvedTraceKey(), sc.TraceID().String()),
+		zap.String(opts.resolvedSpanKey(), sc.SpanID().String()),
+	}
+}
+
+// SugaredLogger wraps a *zap.SugaredLogger to provide *Context methods that
+// automatically inject OTel trace_id and span_id into every log entry.
+//
+// The zero value is not usable; use NewSugared to create one.
+//
+// Example:
+//
+//	sugar := zapagent.NewSugared(base.Sugar(), nil)
+//	sugar.InfowContext(ctx, "user created", "user_id", 42)
+//	// Output: {"level":"info","msg":"user created","user_id":42,"trace_id":"abc...","span_id":"def..."}
+type SugaredLogger struct {
+	base     *zap.SugaredLogger
+	traceKey string
+	spanKey  string
+}
+
+// NewSugared creates a SugaredLogger wrapping base with OTel trace correlation
+// injection. opts may be nil, in which case defaults are used.
+// Panics if base is nil.
+func NewSugared(base *zap.SugaredLogger, opts *Options) *SugaredLogger {
+	if base == nil {
+		panic("zap: NewSugared: base sugared logger must not be nil")
+	}
+	return &SugaredLogger{
+		base:     base,
+		traceKey: opts.resolvedTraceKey(),
+		spanKey:  opts.resolvedSpanKey(),
+	}
+}
+
+// appendTraceKVs returns keysAndValues with trace_id and span_id appended if a
+// valid span context exists in ctx.
+func (l *SugaredLogger) appendTraceKVs(ctx context.Context, keysAndValues []any) []any {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return keysAndValues
+	}
+	return append(keysAndValues, l.traceKey, sc.TraceID().String(), l.spanKey, sc.SpanID().String())
+}
+
+// DebugwContext logs a message at DebugLevel with trace correlation.
+func (l *SugaredLogger) DebugwContext(ctx context.Context, msg string, keysAndValues ...any) {
+	l.base.Debugw(msg, l.appendTraceKVs(ctx, keysAndValues)...)
+}
+
+// InfowContext logs a message at InfoLevel with trace correlation.
+func (l *SugaredLogger) InfowContext(ctx context.Context, msg string, keysAndValues ...any) {
+	l.base.Infow(msg, l.appendTraceKVs(ctx, keysAndValues)...)
+}
+
+// WarnwContext logs a message at WarnLevel with trace correlation.
+func (l *SugaredLogger) WarnwContext(ctx context.Context, msg string, keysAndValues ...any) {
+	l.base.Warnw(msg, l.appendTraceKVs(ctx, keysAndValues)...)
+}
+
+// ErrorwContext logs a message at ErrorLevel with trace correlation.
+func (l *SugaredLogger) ErrorwContext(ctx context.Context, msg string, keysAndValues ...any) {
+	l.base.Errorw(msg, l.appendTraceKVs(ctx, keysAndValues)...)
+}
+
+// DPanicwContext logs a message at DPanicLevel with trace correlation.
+func (l *SugaredLogger) DPanicwContext(ctx context.Context, msg string, keysAndValues ...any) {
+	l.base.DPanicw(msg, l.appendTraceKVs(ctx, keysAndValues)...)
+}
+
+// PanicwContext logs a message at PanicLevel with trace correlation, then panics.
+func (l *SugaredLogger) PanicwContext(ctx context.Context, msg string, keysAndValues ...any) {
+	l.base.Panicw(msg, l.appendTraceKVs(ctx, keysAndValues)...)
+}
+
+// FatalwContext logs a message at FatalLevel with trace correlation, then calls os.Exit(1).
+func (l *SugaredLogger) FatalwContext(ctx context.Context, msg string, keysAndValues ...any) {
+	l.base.Fatalw(msg, l.appendTraceKVs(ctx, keysAndValues)...)
+}
+
+// With creates a new SugaredLogger with the given args pre-set.
+// The returned SugaredLogger continues to inject trace fields on *Context calls.
+func (l *SugaredLogger) With(args ...any) *SugaredLogger {
+	return &SugaredLogger{
+		base:     l.base.With(args...),
+		traceKey: l.traceKey,
+		spanKey:  l.spanKey,
+	}
+}
+
+// Named adds a sub-scope to the logger's name.
+// The returned SugaredLogger continues to inject trace fields on *Context calls.
+func (l *SugaredLogger) Named(name string) *SugaredLogger {
+	return &SugaredLogger{
+		base:     l.base.Named(name),
+		traceKey: l.traceKey,
+		spanKey:  l.spanKey,
+	}
+}
+
+// Unwrap returns the underlying *zap.SugaredLogger.
+func (l *SugaredLogger) Unwrap() *zap.SugaredLogger {
+	return l.base
+}

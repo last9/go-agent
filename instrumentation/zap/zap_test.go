@@ -380,3 +380,169 @@ func TestLogger_Unwrap(t *testing.T) {
 		t.Error("Unwrap must return the base logger")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// TraceFieldsWithOptions tests
+// ---------------------------------------------------------------------------
+
+func TestTraceFieldsWithOptions_NoSpan_ReturnsNil(t *testing.T) {
+	opts := &zapagent.Options{TraceKey: "dd.trace_id", SpanKey: "dd.span_id"}
+	fields := zapagent.TraceFieldsWithOptions(context.Background(), opts)
+	if fields != nil {
+		t.Errorf("expected nil fields when no span, got %v", fields)
+	}
+}
+
+func TestTraceFieldsWithOptions_CustomKeys(t *testing.T) {
+	ctx, _, cleanup := startSpan(t)
+	defer cleanup()
+
+	opts := &zapagent.Options{TraceKey: "dd.trace_id", SpanKey: "dd.span_id"}
+	fields := zapagent.TraceFieldsWithOptions(ctx, opts)
+	if len(fields) != 2 {
+		t.Fatalf("expected 2 fields, got %d", len(fields))
+	}
+
+	var buf bytes.Buffer
+	newTestLogger(&buf).Info("msg", fields...)
+	entry := parseJSON(t, &buf)
+
+	if _, ok := entry["dd.trace_id"]; !ok {
+		t.Error("expected dd.trace_id key")
+	}
+	if _, ok := entry["dd.span_id"]; !ok {
+		t.Error("expected dd.span_id key")
+	}
+	if _, ok := entry["trace_id"]; ok {
+		t.Error("default trace_id key must not appear")
+	}
+}
+
+func TestTraceFieldsWithOptions_NilOpts_UsesDefaults(t *testing.T) {
+	ctx, _, cleanup := startSpan(t)
+	defer cleanup()
+
+	fields := zapagent.TraceFieldsWithOptions(ctx, nil)
+	if len(fields) != 2 {
+		t.Fatalf("expected 2 fields, got %d", len(fields))
+	}
+
+	var buf bytes.Buffer
+	newTestLogger(&buf).Info("msg", fields...)
+	entry := parseJSON(t, &buf)
+
+	if _, ok := entry["trace_id"]; !ok {
+		t.Error("expected default trace_id key")
+	}
+	if _, ok := entry["span_id"]; !ok {
+		t.Error("expected default span_id key")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SugaredLogger tests
+// ---------------------------------------------------------------------------
+
+func TestSugaredLogger_NoSpan_NoInjection(t *testing.T) {
+	var buf bytes.Buffer
+	sugar := zapagent.NewSugared(newTestLogger(&buf).Sugar(), nil)
+	sugar.InfowContext(context.Background(), "hello", "key", "val")
+
+	entry := parseJSON(t, &buf)
+	if _, ok := entry["trace_id"]; ok {
+		t.Error("trace_id must not be present when no span is active")
+	}
+	if entry["key"] != "val" {
+		t.Errorf("user key 'key' must be present, got %v", entry["key"])
+	}
+}
+
+func TestSugaredLogger_ActiveSpan_InjectsIDs(t *testing.T) {
+	ctx, _, cleanup := startSpan(t)
+	defer cleanup()
+
+	var buf bytes.Buffer
+	sugar := zapagent.NewSugared(newTestLogger(&buf).Sugar(), nil)
+	sugar.InfowContext(ctx, "hello", "user_id", 42)
+
+	entry := parseJSON(t, &buf)
+	traceID, ok := entry["trace_id"].(string)
+	if !ok || len(traceID) != 32 {
+		t.Fatalf("expected 32-char trace_id, got %v", entry["trace_id"])
+	}
+	if entry["user_id"] != float64(42) {
+		t.Errorf("user_id = %v, want 42", entry["user_id"])
+	}
+}
+
+func TestSugaredLogger_CustomKeys(t *testing.T) {
+	ctx, _, cleanup := startSpan(t)
+	defer cleanup()
+
+	var buf bytes.Buffer
+	sugar := zapagent.NewSugared(newTestLogger(&buf).Sugar(), &zapagent.Options{
+		TraceKey: "dd.trace_id",
+		SpanKey:  "dd.span_id",
+	})
+	sugar.InfowContext(ctx, "hello")
+
+	entry := parseJSON(t, &buf)
+	if _, ok := entry["dd.trace_id"]; !ok {
+		t.Error("expected dd.trace_id key")
+	}
+	if _, ok := entry["trace_id"]; ok {
+		t.Error("default trace_id must not appear when custom key is set")
+	}
+}
+
+func TestSugaredLogger_With_PreservesInjection(t *testing.T) {
+	ctx, _, cleanup := startSpan(t)
+	defer cleanup()
+
+	var buf bytes.Buffer
+	sugar := zapagent.NewSugared(newTestLogger(&buf).Sugar(), nil)
+	sugar2 := sugar.With("service", "api")
+	sugar2.InfowContext(ctx, "hello")
+
+	entry := parseJSON(t, &buf)
+	if entry["service"] != "api" {
+		t.Error("pre-set field 'service' must be present")
+	}
+	if _, ok := entry["trace_id"]; !ok {
+		t.Error("trace_id must still be injected after With")
+	}
+}
+
+func TestSugaredLogger_Named_PreservesInjection(t *testing.T) {
+	ctx, _, cleanup := startSpan(t)
+	defer cleanup()
+
+	var buf bytes.Buffer
+	sugar := zapagent.NewSugared(newTestLogger(&buf).Sugar(), nil)
+	sugar.Named("subsystem").InfowContext(ctx, "hello")
+
+	entry := parseJSON(t, &buf)
+	if entry["logger"] != "subsystem" {
+		t.Errorf("expected logger name 'subsystem', got %v", entry["logger"])
+	}
+	if _, ok := entry["trace_id"]; !ok {
+		t.Error("trace_id must still be injected after Named")
+	}
+}
+
+func TestSugaredLogger_Unwrap(t *testing.T) {
+	base := zap.NewNop().Sugar()
+	s := zapagent.NewSugared(base, nil)
+	if s.Unwrap() != base {
+		t.Error("Unwrap must return the base sugared logger")
+	}
+}
+
+func TestNewSugared_NilBase_Panics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("NewSugared with nil base must panic")
+		}
+	}()
+	zapagent.NewSugared(nil, nil)
+}
