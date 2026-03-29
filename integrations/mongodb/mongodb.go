@@ -29,6 +29,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -321,24 +322,18 @@ func (m *monitor) failed(ctx context.Context, evt *event.CommandFailedEvent) {
 
 // recordMetrics records operation count and duration.
 func (m *monitor) recordMetrics(ctx context.Context, operation string, isError bool, elapsed time.Duration) {
-	attrs := []attribute.KeyValue{
-		attribute.String("db.system", "mongodb"),
-		attribute.String("db.operation", operation),
-	}
-	attrs = append(attrs, m.baseAttrs...)
+	attrs := append(
+		[]attribute.KeyValue{semconv.DBSystemMongoDB, semconv.DBOperation(operation)},
+		m.baseAttrs...,
+	)
 	metricOpts := metric.WithAttributes(attrs...)
-
 	durationMS := float64(elapsed.Nanoseconds()) / 1e6
 
-	if m.operationCount != nil {
-		m.operationCount.Add(ctx, 1, metricOpts)
-	}
-	if isError && m.errorCount != nil {
+	m.operationCount.Add(ctx, 1, metricOpts)
+	if isError {
 		m.errorCount.Add(ctx, 1, metricOpts)
 	}
-	if m.duration != nil {
-		m.duration.Record(ctx, durationMS, metricOpts)
-	}
+	m.duration.Record(ctx, durationMS, metricOpts)
 }
 
 // extractCollectionName reads the collection name from a BSON command document.
@@ -403,22 +398,24 @@ func extractURIAttributes(uri string) []attribute.KeyValue {
 		}
 	}
 
-	// Extract first host (replica sets list multiple comma-separated hosts)
-	hostPart := parsed.Host
-	if idx := strings.Index(hostPart, ","); idx != -1 {
-		hostPart = hostPart[:idx]
-	}
-
-	host, portStr := splitHostPort(hostPart)
-	if host != "" {
-		attrs = append(attrs, semconv.ServerAddress(host))
-	}
-	if portStr != "" {
-		if port, err := strconv.Atoi(portStr); err == nil {
-			attrs = append(attrs, semconv.ServerPort(port))
+	// Extract first host (replica sets list multiple comma-separated hosts).
+	// url.Parse returns Host with brackets for IPv6; Hostname()/Port() strip them.
+	if idx := strings.Index(parsed.Host, ","); idx != -1 {
+		// Replica set: re-parse only the first host to get clean Hostname/Port.
+		first := parsed.Host[:idx]
+		if sub, err := url.Parse(parsed.Scheme + "://" + first); err == nil {
+			parsed = sub
 		}
-	} else if host != "" && parsed.Scheme == "mongodb" {
-		attrs = append(attrs, semconv.ServerPort(27017))
+	}
+	if host := parsed.Hostname(); host != "" {
+		attrs = append(attrs, semconv.ServerAddress(host))
+		if portStr := parsed.Port(); portStr != "" {
+			if port, err := strconv.Atoi(portStr); err == nil {
+				attrs = append(attrs, semconv.ServerPort(port))
+			}
+		} else if parsed.Scheme == "mongodb" {
+			attrs = append(attrs, semconv.ServerPort(27017))
+		}
 	}
 
 	// Note: db.name is not extracted from the URI here because it is set
@@ -434,41 +431,21 @@ func extractHostAttributes(hosts []string) []attribute.KeyValue {
 	if len(hosts) == 0 {
 		return nil
 	}
-	var attrs []attribute.KeyValue
-	host, portStr := splitHostPort(hosts[0])
-	if host != "" {
-		attrs = append(attrs, semconv.ServerAddress(host))
+	host, portStr, err := net.SplitHostPort(hosts[0])
+	if err != nil {
+		// No port present — treat the entire string as the host.
+		host = hosts[0]
 	}
+	if host == "" {
+		return nil
+	}
+	attrs := []attribute.KeyValue{semconv.ServerAddress(host)}
 	if portStr != "" {
 		if port, err := strconv.Atoi(portStr); err == nil {
 			attrs = append(attrs, semconv.ServerPort(port))
 		}
 	}
 	return attrs
-}
-
-// splitHostPort splits a host:port string, handling IPv6 addresses.
-func splitHostPort(hostport string) (host, port string) {
-	if hostport == "" {
-		return "", ""
-	}
-	// IPv6: [::1]:27017
-	if strings.HasPrefix(hostport, "[") {
-		end := strings.LastIndex(hostport, "]")
-		if end == -1 {
-			return hostport, ""
-		}
-		host = hostport[1:end]
-		rest := hostport[end+1:]
-		if strings.HasPrefix(rest, ":") {
-			port = rest[1:]
-		}
-		return host, port
-	}
-	if idx := strings.LastIndex(hostport, ":"); idx != -1 {
-		return hostport[:idx], hostport[idx+1:]
-	}
-	return hostport, ""
 }
 
 // chainMonitors creates a CommandMonitor that calls both a and b for each event.

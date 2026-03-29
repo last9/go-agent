@@ -19,6 +19,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/last9/go-agent/config"
@@ -34,7 +35,7 @@ import (
 )
 
 var (
-	globalAgent *Agent
+	globalAgent atomic.Pointer[Agent]
 	once        sync.Once
 )
 
@@ -148,33 +149,28 @@ func Start(opts ...Option) error {
 	once.Do(func() {
 		cfg := config.Load()
 
-		// Apply functional options (override env var values)
 		for _, opt := range opts {
 			opt(cfg)
 		}
 
-		// Create resource
 		res, resErr := createResource(cfg)
 		if resErr != nil {
 			err = fmt.Errorf("failed to create resource: %w", resErr)
 			return
 		}
 
-		// Initialize tracer provider
 		tp, tpErr := initTracerProvider(res, cfg)
 		if tpErr != nil {
 			err = fmt.Errorf("failed to initialize tracer provider: %w", tpErr)
 			return
 		}
 
-		// Initialize meter provider
 		mp, mpErr := initMeterProvider(res)
 		if mpErr != nil {
 			err = fmt.Errorf("failed to initialize meter provider: %w", mpErr)
 			return
 		}
 
-		// Set global providers
 		otel.SetTracerProvider(tp)
 		otel.SetMeterProvider(mp)
 		otel.SetTextMapPropagator(
@@ -189,7 +185,7 @@ func Start(opts ...Option) error {
 			log.Printf("[Last9 Agent] Warning: Failed to start runtime metrics: %v", runtimeErr)
 		}
 
-		globalAgent = &Agent{
+		globalAgent.Store(&Agent{
 			config:         cfg,
 			tracerProvider: tp,
 			meterProvider:  mp,
@@ -206,7 +202,7 @@ func Start(opts ...Option) error {
 				}
 				return nil
 			},
-		}
+		})
 
 		log.Printf("[Last9 Agent] Started successfully for service: %s (with runtime metrics)", cfg.ServiceName)
 	})
@@ -221,14 +217,14 @@ func Start(opts ...Option) error {
 //	agent.Start()
 //	defer agent.Shutdown()
 func Shutdown() error {
-	if globalAgent == nil {
+	if globalAgent.Load() == nil {
 		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := globalAgent.shutdown(ctx); err != nil {
+	if err := globalAgent.Load().shutdown(ctx); err != nil {
 		return fmt.Errorf("agent shutdown failed: %w", err)
 	}
 
@@ -238,15 +234,15 @@ func Shutdown() error {
 
 // IsInitialized returns true if the agent has been started
 func IsInitialized() bool {
-	return globalAgent != nil
+	return globalAgent.Load() != nil
 }
 
 // GetConfig returns the agent configuration (or nil if not initialized)
 func GetConfig() *config.Config {
-	if globalAgent == nil {
+	if globalAgent.Load() == nil {
 		return nil
 	}
-	return globalAgent.config
+	return globalAgent.Load().config
 }
 
 // createResource creates an OpenTelemetry resource with service information
