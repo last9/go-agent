@@ -141,45 +141,34 @@ func TestMiddleware_StatusCodeAttribute(t *testing.T) {
 	}
 }
 
-func TestMiddleware_5xxSetsSpanError(t *testing.T) {
-	exp := setupTracer(t)
-
-	ctx := newBeegoCtx("GET", "/api/crash", nil)
-	beegoagent.Middleware()(func(c *beegocontext.Context) {
-		c.ResponseWriter.WriteHeader(http.StatusInternalServerError)
-	})(ctx)
-
-	span := exp.GetSpans()[0]
-	if span.Status.Code != codes.Error {
-		t.Errorf("span status = %v, want Error for 5xx", span.Status.Code)
+func TestMiddleware_StatusCodeToSpanStatus(t *testing.T) {
+	tests := []struct {
+		name      string
+		code      int
+		wantError bool
+	}{
+		{"200 no error", http.StatusOK, false},
+		{"404 no error", http.StatusNotFound, false},
+		{"500 sets error", http.StatusInternalServerError, true},
+		{"502 sets error", http.StatusBadGateway, true},
 	}
-}
 
-func TestMiddleware_4xxNoSpanError(t *testing.T) {
-	exp := setupTracer(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exp := setupTracer(t)
+			ctx := newBeegoCtx("GET", "/api/test", nil)
+			beegoagent.Middleware()(func(c *beegocontext.Context) {
+				c.ResponseWriter.WriteHeader(tt.code)
+			})(ctx)
 
-	ctx := newBeegoCtx("GET", "/api/missing", nil)
-	beegoagent.Middleware()(func(c *beegocontext.Context) {
-		c.ResponseWriter.WriteHeader(http.StatusNotFound)
-	})(ctx)
-
-	span := exp.GetSpans()[0]
-	if span.Status.Code == codes.Error {
-		t.Errorf("span status = Error for 404, want no error")
-	}
-}
-
-func TestMiddleware_2xxNoSpanError(t *testing.T) {
-	exp := setupTracer(t)
-
-	ctx := newBeegoCtx("GET", "/api/users", nil)
-	beegoagent.Middleware()(func(c *beegocontext.Context) {
-		c.ResponseWriter.WriteHeader(http.StatusOK)
-	})(ctx)
-
-	span := exp.GetSpans()[0]
-	if span.Status.Code == codes.Error {
-		t.Errorf("span status = Error for 200, want no error")
+			span := exp.GetSpans()[0]
+			if tt.wantError && span.Status.Code != codes.Error {
+				t.Errorf("status %d: span.Status.Code = %v, want Error", tt.code, span.Status.Code)
+			}
+			if !tt.wantError && span.Status.Code == codes.Error {
+				t.Errorf("status %d: span.Status.Code = Error, want no error", tt.code)
+			}
+		})
 	}
 }
 
@@ -251,19 +240,5 @@ func TestMiddleware_RequestContextContainsSpan(t *testing.T) {
 
 	if !trace.SpanContextFromContext(capturedCtx).IsValid() {
 		t.Error("request context inside next handler must contain a valid span context")
-	}
-}
-
-func TestMiddleware_502AlsoSetsError(t *testing.T) {
-	exp := setupTracer(t)
-
-	ctx := newBeegoCtx("GET", "/api/gateway", nil)
-	beegoagent.Middleware()(func(c *beegocontext.Context) {
-		c.ResponseWriter.WriteHeader(http.StatusBadGateway)
-	})(ctx)
-
-	span := exp.GetSpans()[0]
-	if span.Status.Code != codes.Error {
-		t.Errorf("span status = %v, want Error for 502", span.Status.Code)
 	}
 }

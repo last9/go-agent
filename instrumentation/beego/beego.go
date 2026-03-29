@@ -2,7 +2,6 @@
 package beego
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 
@@ -55,41 +54,31 @@ func New() *web.HttpServer {
 func Middleware() func(next web.FilterFunc) web.FilterFunc {
 	tracer := otel.GetTracerProvider().Tracer(tracerName)
 	propagator := otel.GetTextMapPropagator()
+	serverKind := trace.WithSpanKind(trace.SpanKindServer)
 
 	return func(next web.FilterFunc) web.FilterFunc {
 		return func(ctx *context.Context) {
 			req := ctx.Request
-
-			// Extract propagated trace context from incoming request
 			parentCtx := propagator.Extract(req.Context(), propagation.HeaderCarrier(req.Header))
 
 			// Uses raw path for span name. Beego does not expose the matched
 			// route pattern in a FilterChain, so routes with path parameters
 			// (e.g., /users/:id) will produce per-path span names.
-			spanName := fmt.Sprintf("%s %s", req.Method, req.URL.Path)
-
-			opts := []trace.SpanStartOption{
-				trace.WithSpanKind(trace.SpanKindServer),
+			spanCtx, span := tracer.Start(parentCtx, req.Method+" "+req.URL.Path,
+				serverKind,
 				trace.WithAttributes(
 					semconv.HTTPRequestMethodKey.String(req.Method),
 					semconv.URLPath(req.URL.Path),
 					semconv.ServerAddress(req.Host),
 				),
-			}
-
-			spanCtx, span := tracer.Start(parentCtx, spanName, opts...)
+			)
 			defer span.End()
 
-			// Inject trace context into the request so downstream code can access it
 			ctx.Request = req.WithContext(spanCtx)
-
-			// Execute the rest of the filter/router chain
 			next(ctx)
 
-			// Record response attributes
 			statusCode := ctx.ResponseWriter.Status
 			span.SetAttributes(semconv.HTTPResponseStatusCode(statusCode))
-
 			if statusCode >= http.StatusInternalServerError {
 				span.SetStatus(codes.Error, http.StatusText(statusCode))
 			}
