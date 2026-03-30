@@ -14,6 +14,19 @@ import (
 	"google.golang.org/grpc"
 )
 
+// buildHTTPFilterOptions returns otelhttp options with a route exclusion filter
+// if the agent has exclusion rules configured.
+func buildHTTPFilterOptions() []otelhttp.Option {
+	var opts []otelhttp.Option
+	rm := agent.GetRouteMatcher()
+	if !rm.IsEmpty() {
+		opts = append(opts, otelhttp.WithFilter(func(r *http.Request) bool {
+			return !rm.ShouldExclude(r.URL.Path)
+		}))
+	}
+	return opts
+}
+
 // NewGatewayMux creates a new grpc-gateway ServeMux.
 // This ServeMux handles gRPC-to-JSON transcoding, converting HTTP/JSON requests into gRPC calls.
 //
@@ -98,7 +111,8 @@ func WrapHTTPMux(mux *http.ServeMux, serviceName string) http.Handler {
 		}
 	}
 
-	return otelhttp.NewHandler(mux, serviceName)
+	opts := buildHTTPFilterOptions()
+	return otelhttp.NewHandler(mux, serviceName, opts...)
 }
 
 // NewDialOption returns a gRPC dial option that instruments client connections.
