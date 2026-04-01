@@ -52,17 +52,7 @@ func Handler(h http.Handler, operation string) http.Handler {
 		operation = "HTTP"
 	}
 
-	opts := []otelhttp.Option{
-		otelhttp.WithPropagators(otel.GetTextMapPropagator()),
-	}
-
-	// Add service name if available
-	cfg := agent.GetConfig()
-	if cfg != nil {
-		opts = append(opts, otelhttp.WithServerName(cfg.ServiceName))
-	}
-
-	return otelhttp.NewHandler(h, operation, opts...)
+	return otelhttp.NewHandler(h, operation, buildOTelOptions()...)
 }
 
 // HandlerFunc wraps an http.HandlerFunc with OpenTelemetry instrumentation.
@@ -94,17 +84,7 @@ func HandlerFunc(f http.HandlerFunc, operation string) http.Handler {
 //	http.ListenAndServe(":8080", nethttp.WrapHandler(mux))
 func WrapHandler(h http.Handler) http.Handler {
 	ensureAgentStarted()
-
-	opts := []otelhttp.Option{
-		otelhttp.WithPropagators(otel.GetTextMapPropagator()),
-	}
-
-	cfg := agent.GetConfig()
-	if cfg != nil {
-		opts = append(opts, otelhttp.WithServerName(cfg.ServiceName))
-	}
-
-	return otelhttp.NewHandler(h, "", opts...)
+	return otelhttp.NewHandler(h, "", buildOTelOptions()...)
 }
 
 // ServeMux is an instrumented version of http.ServeMux.
@@ -259,6 +239,27 @@ func ExtractContext(ctx context.Context, r *http.Request) context.Context {
 func InjectContext(ctx context.Context, r *http.Request) {
 	propagator := otel.GetTextMapPropagator()
 	propagator.Inject(ctx, propagation.HeaderCarrier(r.Header))
+}
+
+// buildOTelOptions returns common otelhttp options: propagator, server name, and route filter.
+func buildOTelOptions() []otelhttp.Option {
+	opts := []otelhttp.Option{
+		otelhttp.WithPropagators(otel.GetTextMapPropagator()),
+	}
+
+	cfg := agent.GetConfig()
+	if cfg != nil {
+		opts = append(opts, otelhttp.WithServerName(cfg.ServiceName))
+	}
+
+	rm := agent.GetRouteMatcher()
+	if !rm.IsEmpty() {
+		opts = append(opts, otelhttp.WithFilter(func(r *http.Request) bool {
+			return !rm.ShouldExclude(r.URL.Path)
+		}))
+	}
+
+	return opts
 }
 
 // ensureAgentStarted starts the agent if not already initialized
