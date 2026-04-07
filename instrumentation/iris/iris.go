@@ -1,6 +1,4 @@
 // Package iris provides Last9 instrumentation for the Iris web framework.
-// Since there is no official OTel contrib package for Iris, this package
-// implements tracing natively using the propagation API.
 package iris
 
 import (
@@ -51,12 +49,12 @@ func New() *iris.Application {
 func Middleware() iris.Handler {
 	tracer := otel.GetTracerProvider().Tracer(tracerName)
 	propagator := otel.GetTextMapPropagator()
+	rm := agent.GetRouteMatcher()
 
 	return func(ctx iris.Context) {
 		r := ctx.Request()
 		path := r.URL.Path
 
-		rm := agent.GetRouteMatcher()
 		if !rm.IsEmpty() && rm.ShouldExclude(path) {
 			ctx.Next()
 			return
@@ -66,8 +64,6 @@ func Middleware() iris.Handler {
 
 		method := r.Method
 		spanName := method + " " + path
-		// Use the matched route template when available so that parametric routes
-		// like /users/{id} produce a single span name instead of one per user ID.
 		if route := ctx.GetCurrentRoute(); route != nil {
 			if routePath := route.Path(); routePath != "" {
 				spanName = method + " " + routePath

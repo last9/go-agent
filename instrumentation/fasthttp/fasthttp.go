@@ -16,10 +16,13 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const (
-	tracerName     = "github.com/last9/go-agent/instrumentation/fasthttp"
-	spanContextKey = "__last9_otel_ctx"
-)
+const tracerName = "github.com/last9/go-agent/instrumentation/fasthttp"
+
+type spanContextKeyType struct{}
+
+// spanContextKey is a typed key for fasthttp UserValue storage, preventing
+// collisions with other packages using string-keyed UserValues.
+var spanContextKey = spanContextKeyType{}
 
 // headerCarrier adapts fasthttp request headers to propagation.TextMapCarrier
 // so that trace context can be extracted from incoming requests.
