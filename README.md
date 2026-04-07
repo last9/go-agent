@@ -125,6 +125,24 @@ r := gorillaagent.NewRouter()
 r.HandleFunc("/ping", handler).Methods("GET")
 ```
 
+### gRPC
+
+```go
+import grpcagent "github.com/last9/go-agent/instrumentation/grpc"
+
+// Server
+lis, _ := net.Listen("tcp", ":50051")
+s := grpcagent.NewServer()
+pb.RegisterGreeterServer(s, &server{})
+s.Serve(lis)
+
+// Client
+conn, _ := grpc.NewClient("localhost:50051",
+    grpc.WithTransportCredentials(insecure.NewCredentials()),
+    grpcagent.NewClientDialOption(),
+)
+```
+
 ### gRPC-Gateway
 
 ```go
@@ -146,6 +164,56 @@ conn, _ := grpc.NewClient("localhost:50051",
 httpMux := http.NewServeMux()
 httpMux.Handle("/", gwMux)
 http.ListenAndServe(":8080", grpcgateway.WrapHTTPMux(httpMux, "my-gateway"))
+```
+
+### fasthttp
+
+```go
+import fasthttpagent "github.com/last9/go-agent/instrumentation/fasthttp"
+
+handler := func(ctx *fasthttp.RequestCtx) {
+    ctx.WriteString("hello")
+}
+fasthttp.ListenAndServe(":8080", fasthttpagent.Middleware(handler))
+
+// Access the active span context inside a handler
+func myHandler(ctx *fasthttp.RequestCtx) {
+    otelCtx := fasthttpagent.ContextFromRequest(ctx)
+    _, span := otel.Tracer("my-service").Start(otelCtx, "my-op")
+    defer span.End()
+}
+```
+
+### Iris
+
+```go
+import irisagent "github.com/last9/go-agent/instrumentation/iris"
+
+app := irisagent.New()   // drop-in for iris.New()
+app.Get("/ping", func(ctx iris.Context) {
+    ctx.WriteString("pong")
+})
+app.Listen(":8080")
+
+// Or add to an existing application
+app := iris.New()
+app.Use(irisagent.Middleware())
+```
+
+### Beego
+
+```go
+import beegoagent "github.com/last9/go-agent/instrumentation/beego"
+
+app := beegoagent.New()
+app.Get("/ping", func(ctx *context.Context) {
+    ctx.Output.Body([]byte("pong"))
+})
+app.Run()
+
+// Or add to an existing server
+app := web.NewHttpSever()
+app.InsertFilterChain("/*", beegoagent.Middleware())
 ```
 
 ## Database Support
