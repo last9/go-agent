@@ -1,0 +1,39 @@
+version: 2
+
+project_name: go-agent
+
+# This is a Go library — no binaries to build or publish.
+builds:
+  - skip: true
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: "New Features"
+      regexp: "^feat"
+      order: 0
+    - title: "Bug Fixes"
+      regexp: "^fix"
+      order: 1
+    - title: "Refactoring"
+      regexp: "^refactor"
+      order: 2
+    - title: "Other"
+      order: 999
+
+release:
+  github:
+    owner: last9
+    name: go-agent
+  name_template: "{{ .Tag }}"
+  draft: false
+  prerelease: auto
+  make_latest: true
