@@ -1,169 +1,84 @@
 # Last9 Go Agent
 
-A drop-in OpenTelemetry agent for Go applications that minimizes code changes while providing comprehensive observability with automatic traces and metrics.
+<p>
+  <a href="https://pkg.go.dev/github.com/last9/go-agent"><img src="https://pkg.go.dev/badge/github.com/last9/go-agent.svg" alt="Go Reference"></a>
+  <a href="https://github.com/last9/go-agent/releases"><img src="https://img.shields.io/github/v/release/last9/go-agent" alt="Release"></a>
+  <a href="https://github.com/last9/go-agent/actions/workflows/ci.yml"><img src="https://github.com/last9/go-agent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/last9/go-agent.svg)](https://pkg.go.dev/github.com/last9/go-agent)
+<p>
+Last9 Go Agent gives you full observability — distributed traces, runtime metrics, and log-trace correlation — without writing the plumbing yourself. One call to <code>agent.Start()</code> replaces hundreds of lines of OpenTelemetry setup. Every framework integration is a drop-in replacement, not a wrapper you have to bolt on.
+</p>
 
-## 📋 Table of Contents
+<p>
+This is the SDK path: works anywhere Go runs — VMs, bare metal, Lambda, local development. If you're on Kubernetes and want zero-code instrumentation, the <a href="https://github.com/last9/last9-k8s-observability-installer">eBPF operator</a> is the right tool. Both can coexist: eBPF for base HTTP and DB coverage, this SDK for custom business spans.
+</p>
 
-- [Key Features](#-key-features)
-- [Quick Start](#-sdk-quick-start-this-repo)
-- [Framework Support](#-framework-support) - net/http • Gin • Chi • Echo • Gorilla • gRPC-Gateway
-- [Database Support](#️-database-support) - PostgreSQL • MySQL • SQLite
-- [MongoDB Support](#-mongodb-support)
-- [Redis Support](#-redis-support)
-- [Kafka Support](#-kafka-support) - Producers • Consumers
-- [HTTP Client](#-http-client-support)
-- [Log-Trace Correlation (zap)](#-log-trace-correlation-zap) - zap
-- [Log-Trace Correlation (slog)](#-log-trace-correlation) - slog
-- [Metrics Support](#-metrics-support) - Automatic • Custom • Runtime
-- [Route Exclusion](#-route-exclusion) - Skip tracing for health checks & internal paths
-- [Configuration](#️-configuration)
-- [Requirements & Compatibility](#-requirements--compatibility)
-- [Testing](#-testing)
-- [SDK vs eBPF](#-sdk-vs-ebpf-full-comparison)
+## Table of Contents
 
-## ✨ Key Features
+- [Quick Start](#quick-start)
+- [Framework Support](#framework-support)
+- [Database Support](#database-support)
+- [MongoDB](#mongodb)
+- [Redis](#redis)
+- [Kafka](#kafka)
+- [HTTP Client](#http-client)
+- [Log-Trace Correlation](#log-trace-correlation)
+- [Metrics](#metrics)
+- [Route Exclusion](#route-exclusion)
+- [Configuration](#configuration)
+- [Testing](#testing)
 
-- 🚀 **One-line initialization** - `agent.Start()` replaces 80-150 lines of OpenTelemetry setup code
-- 🔌 **Drop-in replacements** - Minimal code changes for Gin, Echo, Gorilla, gRPC-Gateway (Chi requires wrapper)
-- 🎯 **Auto-instrumentation** - HTTP, gRPC, SQL, MongoDB, Redis, Kafka automatically traced with proper span nesting
-- 📊 **Automatic metrics** - Runtime (memory, GC, goroutines), HTTP, gRPC, database, MongoDB, Kafka, Redis metrics out-of-the-box
-- 📈 **Custom metrics** - Simple helpers for counters, histograms, gauges for business metrics
-- 🚫 **Route exclusion** - Automatically skips health checks and infrastructure endpoints from tracing
-- ⚙️ **Environment-based config** - Uses standard OpenTelemetry environment variables (no hardcoded config)
-- 🔗 **Log-trace correlation** - Automatic `trace_id`/`span_id` injection into `log/slog` log entries
-- 🔍 **Complete observability** - Full distributed tracing + metrics across all layers (HTTP → gRPC → DB → External APIs)
-
-## 📋 Requirements & Compatibility
-
-### Minimum Requirements
-- **Go Version**: 1.22 or later (1.24+ recommended for full runtime metrics)
-- **Environment**: Works on Linux, macOS, Windows
-- **Docker**: Required only for integration tests
-
-### Go Version Feature Matrix
-| Go Version | Support Level | Runtime Metrics |
-|------------|---------------|-----------------|
-| **1.24+** | Full | Complete OTel runtime instrumentation (15+ metrics) |
-| **1.22-1.23** | Full | Basic runtime metrics (memory, goroutines, GC) |
-| **< 1.22** | Not supported | - |
-
-The agent provides comprehensive telemetry including:
-- **Full distributed tracing** across all instrumented frameworks
-- **Automatic runtime metrics** (varies by Go version, see above)
-- **Custom metrics** support for business-specific observability
-
-### Supported Frameworks & Libraries
-| Category | Supported | Version |
-|----------|-----------|---------|
-| **Logging** | zap (Uber) | v1.27+ |
-| **Web Frameworks** | net/http, Gin, Chi, Echo, Gorilla Mux, gRPC-Gateway | Latest stable |
-| **Databases** | PostgreSQL, MySQL, SQLite | Any version |
-| **MongoDB** | MongoDB (mongo-driver v1) | v1.11+ |
-| **Message Queues** | Kafka (IBM Sarama) | 2.6.0+ |
-| **Caching** | Redis (go-redis) | v9 |
-| **Logging** | log/slog (trace correlation) | Go 1.21+ (stdlib) |
-| **OpenTelemetry** | OTLP/HTTP (traces), OTLP/gRPC (metrics) | 1.39.0 |
-
-### OpenTelemetry Specifications
-This agent implements:
-- **Traces**: OpenTelemetry Tracing API 1.39.0
-- **Metrics**: OpenTelemetry Metrics API 1.39.0
-- **Semantic Conventions**: v1.26.0
-- **OTLP Protocol**: HTTP (traces), gRPC (metrics)
-
-See [OpenTelemetry Go Documentation](https://opentelemetry.io/docs/languages/go/) for specification details.
-
----
-
-The Last9 Go Agent provides:
-- **Single line initialization**: `agent.Start()`
-- **Drop-in replacements** for popular frameworks
-- **Auto-configuration** from environment variables
-- **Pre-built integrations** for databases, Redis, Kafka, and HTTP clients
-- **Automatic metrics** for runtime, HTTP, gRPC, databases, Kafka, Redis
-- **Custom metrics helpers** for business-specific observability
-
-## 🎭 Two Ways to Instrument Go with Last9
-
-Last9 offers **two approaches** for Go instrumentation - choose based on your environment:
-
-| Approach | Environment | Code Changes | Best For |
-|----------|-------------|--------------|----------|
-| **SDK** (this repo) | Anywhere | Minimal (2 lines) | VMs, Lambda, local dev, fine control |
-| **eBPF** ([operator](https://github.com/last9/last9-k8s-observability-installer)) | Kubernetes only | None | K8s production, zero-code, scale |
-
-### When to Use SDK (This Approach)
-- ✅ Running on VMs, bare metal, or Lambda
-- ✅ Local development (no Kubernetes)
-- ✅ Need custom business logic spans
-- ✅ Want fine-grained control
-- ✅ Privileged access not allowed
-
-### When to Use eBPF (Operator)
-- ✅ Running in Kubernetes
-- ✅ Want truly zero code changes
-- ✅ Standardizing across many services
-- ✅ Don't need custom spans
-- ✅ Security team approves eBPF
-
-**Can use both?** Yes! Use eBPF for base instrumentation (HTTP, DB) + SDK for custom spans.
-
----
-
-## 🚀 SDK Quick Start (This Repo)
-
-### 1. Install
+## Quick Start
 
 ```bash
 go get github.com/last9/go-agent
 ```
 
-### 2. Configure
-
-Set environment variables (or use a `.env` file):
+Set your environment variables:
 
 ```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT="<your last9 otel endpoint>"
+export OTEL_EXPORTER_OTLP_ENDPOINT="<your last9 otlp endpoint>"
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic <your last9 token>"
 export OTEL_SERVICE_NAME="my-service"
-export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=local,team=backend"
 ```
 
-## 📚 Framework Support
-
-### net/http (Standard Library)
-
-For applications using Go's standard `net/http` package without any framework:
+Add two lines to `main.go`:
 
 ```go
-import nethttpagent "github.com/last9/go-agent/instrumentation/nethttp"
-
 func main() {
     agent.Start()
     defer agent.Shutdown()
 
-    // Option 1: Use instrumented ServeMux (recommended)
-    mux := nethttpagent.NewServeMux()
-    mux.HandleFunc("/users", usersHandler)
-    mux.HandleFunc("/orders", ordersHandler)
-    http.ListenAndServe(":8080", mux)
-
-    // Option 2: Wrap existing handler/mux
-    stdMux := http.NewServeMux()
-    stdMux.HandleFunc("/api", apiHandler)
-    http.ListenAndServe(":8080", nethttpagent.WrapHandler(stdMux))
-
-    // Option 3: Wrap individual handlers
-    http.Handle("/ping", nethttpagent.Handler(pingHandler, "/ping"))
-    http.ListenAndServe(":8080", nil)
-
-    // Option 4: Drop-in replacement for ListenAndServe
-    mux := http.NewServeMux()
-    mux.HandleFunc("/data", dataHandler)
-    nethttpagent.ListenAndServe(":8080", mux)  // Automatically wraps handler
+    // your application code, unchanged
 }
+```
+
+That's it. Traces and metrics start flowing.
+
+## Framework Support
+
+<p>
+Every web framework integration is a drop-in replacement for the standard constructor. You change the import and the instantiation call — nothing else in your application changes.
+</p>
+
+### net/http
+
+```go
+import nethttpagent "github.com/last9/go-agent/instrumentation/nethttp"
+
+mux := nethttpagent.NewServeMux()
+mux.HandleFunc("/users", usersHandler)
+http.ListenAndServe(":8080", mux)
+
+// Or wrap an existing handler
+http.ListenAndServe(":8080", nethttpagent.WrapHandler(existingMux))
+
+// Or wrap individual handlers
+http.Handle("/ping", nethttpagent.Handler(pingHandler, "/ping"))
+
+// Or use the drop-in ListenAndServe
+nethttpagent.ListenAndServe(":8080", mux)
 ```
 
 ### Gin
@@ -171,23 +86,12 @@ func main() {
 ```go
 import ginagent "github.com/last9/go-agent/instrumentation/gin"
 
-func main() {
-    agent.Start()
-    defer agent.Shutdown()
+r := ginagent.Default()   // includes logging & recovery
+r := ginagent.New()       // minimal
 
-    // Option 1: Use Default (includes logging & recovery)
-    r := ginagent.Default()
-
-    // Option 2: Use New (minimal setup)
-    r := ginagent.New()
-
-    // Option 3: Add to existing router
-    r := gin.New()
-    r.Use(ginagent.Middleware())
-
-    r.GET("/ping", handler)
-    r.Run(":8080")
-}
+// Or add to an existing router
+r := gin.New()
+r.Use(ginagent.Middleware())
 ```
 
 ### Chi
@@ -195,20 +99,13 @@ func main() {
 ```go
 import chiagent "github.com/last9/go-agent/instrumentation/chi"
 
-func main() {
-    agent.Start()
-    defer agent.Shutdown()
+r := chiagent.New()
 
-    // Option 1: New instrumented router
-    r := chiagent.New()
-
-    // Option 2: Add to existing router (AFTER defining routes)
-    r := chi.NewRouter()
-    r.Get("/users/{id}", handler)
-    chiagent.Use(r)  // Add AFTER routes for proper pattern capture
-
-    http.ListenAndServe(":8080", r)
-}
+// Or instrument an existing router — add AFTER defining routes
+// so the middleware can capture the matched route pattern
+r := chi.NewRouter()
+r.Get("/users/{id}", handler)
+chiagent.Use(r)
 ```
 
 ### Echo
@@ -216,18 +113,7 @@ func main() {
 ```go
 import echoagent "github.com/last9/go-agent/instrumentation/echo"
 
-func main() {
-    agent.Start()
-    defer agent.Shutdown()
-
-    // New instrumented Echo instance
-    e := echoagent.New()
-
-    e.GET("/ping", func(c echo.Context) error {
-        return c.String(200, "pong")
-    })
-    e.Start(":8080")
-}
+e := echoagent.New()
 ```
 
 ### Gorilla Mux
@@ -235,16 +121,8 @@ func main() {
 ```go
 import gorillaagent "github.com/last9/go-agent/instrumentation/gorilla"
 
-func main() {
-    agent.Start()
-    defer agent.Shutdown()
-
-    // New instrumented router
-    r := gorillaagent.NewRouter()
-
-    r.HandleFunc("/ping", handler).Methods("GET")
-    http.ListenAndServe(":8080", r)
-}
+r := gorillaagent.NewRouter()
+r.HandleFunc("/ping", handler).Methods("GET")
 ```
 
 ### gRPC-Gateway
@@ -255,35 +133,26 @@ import (
     "github.com/last9/go-agent/instrumentation/grpcgateway"
 )
 
-func main() {
-    agent.Start()
-    defer agent.Shutdown()
+grpcServer := grpcgateway.NewGrpcServer()
+pb.RegisterYourServiceServer(grpcServer, &server{})
 
-    // gRPC server (auto-instrumented)
-    grpcServer := grpcgateway.NewGrpcServer()
-    pb.RegisterYourServiceServer(grpcServer, &server{})
+gwMux := grpcgateway.NewGatewayMux()
 
-    // gRPC-Gateway mux (auto-instrumented)
-    gwMux := grpcgateway.NewGatewayMux()
+conn, _ := grpc.NewClient("localhost:50051",
+    grpc.WithTransportCredentials(insecure.NewCredentials()),
+    grpcgateway.NewDialOption(),
+)
 
-    // gRPC client connection (auto-instrumented)
-    conn, _ := grpc.NewClient("localhost:50051",
-        grpc.WithTransportCredentials(insecure.NewCredentials()),
-        grpcgateway.NewDialOption(),
-    )
-
-    // HTTP wrapper (auto-instrumented)
-    httpMux := http.NewServeMux()
-    httpMux.Handle("/", gwMux)
-    handler := grpcgateway.WrapHTTPMux(httpMux, "my-gateway")
-
-    http.ListenAndServe(":8080", handler)
-}
+httpMux := http.NewServeMux()
+httpMux.Handle("/", gwMux)
+http.ListenAndServe(":8080", grpcgateway.WrapHTTPMux(httpMux, "my-gateway"))
 ```
 
-## 🗄️ Database Support
+## Database Support
 
-### PostgreSQL / MySQL / SQLite
+<p>
+SQL tracing uses <code>database.Open()</code> instead of <code>sql.Open()</code>. Every query gets a span. Connection pool metrics are collected automatically. The agent extracts host, port, user, and database name from your DSN and stamps them onto spans as OTel semantic convention attributes.
+</p>
 
 ```go
 import "github.com/last9/go-agent/integrations/database"
@@ -295,35 +164,26 @@ db, err := database.Open(database.Config{
 })
 defer db.Close()
 
-// Use normally - all queries are automatically traced!
+// Use db normally — all queries are automatically traced
 rows, err := db.Query("SELECT * FROM users")
 ```
 
-**✨ Connection Attributes**: The agent automatically extracts connection metadata from your DSN:
-- `server.address` - Database host (replaces deprecated `net.peer.name`)
-- `server.port` - Database port
-- `db.user` - Database user
-- `db.name` - Database name
-- `db.system` - Database type (postgresql, mysql, sqlite)
-
-These attributes follow [OpenTelemetry semantic conventions v1.25.0](https://opentelemetry.io/docs/specs/semconv/database/database-spans/) and enable better observability of database connections.
-
-### Quick initialization (panics on error):
-
 ```go
+// Panic on error variant for quick initialization
 db := database.MustOpen(database.Config{
     DriverName:   "postgres",
     DSN:          os.Getenv("DATABASE_URL"),
     DatabaseName: "mydb",
 })
-defer db.Close()
 ```
+
+Supported drivers: `postgres`, `pgx`, `mysql`, `sqlite`, `sqlite3`.
 
 ### Manual Wrapper Spans
 
-If you create your own spans wrapping DB operations (e.g. repository methods), those spans won't automatically carry `server.address`, `server.port`, or `db.user` — those attributes are only injected into spans auto-generated by the otelsql layer.
-
-Use `ParseDSNAttributes` to stamp connection attributes onto any span:
+<p>
+When you create spans around repository methods, they won't inherit the connection attributes auto-generated by the SQL layer. Use <code>ParseDSNAttributes</code> to stamp them yourself:
+</p>
 
 ```go
 import "github.com/last9/go-agent/integrations/database"
@@ -332,487 +192,197 @@ func (r *UserRepo) FindByID(ctx context.Context, id int) (*User, error) {
     ctx, span := tracer.Start(ctx, "FindByID")
     defer span.End()
 
-    // Stamp server.address, server.port, db.user, db.name onto this span
     span.SetAttributes(database.ParseDSNAttributes(r.dsn, "mysql")...)
 
     // ... run query
 }
 ```
 
-Supported drivers: `postgres`, `pgx`, `mysql`, `sqlite`, `sqlite3`. Unknown drivers fall back to URL-style parsing.
-
-## 🍃 MongoDB Support
+## MongoDB
 
 ```go
 import mongoagent "github.com/last9/go-agent/integrations/mongodb"
-```
 
-### Option 1: New Client (recommended)
-
-```go
 client, err := mongoagent.NewClient(mongoagent.Config{
     URI: "mongodb://localhost:27017/mydb",
 })
-if err != nil {
-    log.Fatal(err)
-}
 defer client.Disconnect(context.Background())
 
-// Use normally - all operations are automatically traced!
 col := client.Database("mydb").Collection("users")
-col.InsertOne(ctx, bson.M{"name": "Alice", "age": 30})
+col.InsertOne(ctx, bson.M{"name": "Alice"})
 ```
 
-### Option 2: Instrument existing options
+Or instrument an existing options struct:
 
 ```go
 opts := options.Client().ApplyURI(os.Getenv("MONGO_URI"))
-opts.SetAuth(options.Credential{Username: "admin", Password: "secret"})
-
 client, err := mongoagent.Instrument(opts)
-if err != nil {
-    log.Fatal(err)
-}
-defer client.Disconnect(context.Background())
 ```
 
-**What gets traced:**
-- All CRUD operations (`insert`, `find`, `update`, `delete`)
-- Aggregation pipelines
-- Index operations (`createIndexes`)
-- `getMore` cursor operations
+All CRUD operations, aggregation pipelines, and index operations are traced. Connection housekeeping (`hello`, `ping`, `isMaster`) and auth handshakes are silently skipped.
 
-**What gets skipped** (noise reduction):
-- `hello`, `isMaster`, `ping` (connection housekeeping)
-- `saslStart`, `saslContinue`, `authenticate` (auth handshakes)
-- `endSessions`
-
-**Span attributes** (per [OTel DB semantic conventions](https://opentelemetry.io/docs/specs/semconv/database/database-spans/)):
-- `db.system` = `mongodb`
-- `db.name` - Database name
-- `db.operation` - Command name (e.g., `find`, `insert`)
-- `db.mongodb.collection` - Target collection
-- `server.address`, `server.port` - Connection info
-
-**Automatic metrics:**
-- `db.mongodb.operations` - Operation count
-- `db.mongodb.errors` - Error count
-- `db.mongodb.operation.duration` - Duration histogram (ms)
-
-## 🔴 Redis Support
+## Redis
 
 ```go
 import redisagent "github.com/last9/go-agent/integrations/redis"
 
-// Drop-in replacement for redis.NewClient()
 rdb := redisagent.NewClient(&redis.Options{
     Addr: "localhost:6379",
 })
-defer rdb.Close()
 
-// All Redis commands are automatically traced!
+// All commands are automatically traced
 err := rdb.Set(ctx, "key", "value", 0).Err()
 val, err := rdb.Get(ctx, "key").Result()
 ```
 
-### Redis Cluster:
-
 ```go
+// Cluster support
 rdb := redisagent.NewClusterClient(&redis.ClusterOptions{
     Addrs: []string{":7000", ":7001", ":7002"},
 })
 ```
 
-## 📨 Kafka Support
+## Kafka
 
-### Producer (Sync)
+### Producer
 
 ```go
 import kafkaagent "github.com/last9/go-agent/integrations/kafka"
 
-// Create instrumented producer
 producer, err := kafkaagent.NewSyncProducer(kafkaagent.ProducerConfig{
     Brokers: []string{"localhost:9092"},
 })
 defer producer.Close()
 
-// Send message (automatically traced with context propagation)
 partition, offset, err := producer.SendMessage(ctx, &sarama.ProducerMessage{
     Topic: "my-topic",
     Value: sarama.StringEncoder("Hello Kafka"),
 })
 ```
 
-### Consumer (Consumer Group)
+### Consumer Group
 
 ```go
-import kafkaagent "github.com/last9/go-agent/integrations/kafka"
-
-// Implement your handler
-type MyHandler struct{}
-
-func (h *MyHandler) Setup(session sarama.ConsumerGroupSession) error {
-    return nil
-}
-
-func (h *MyHandler) Cleanup(session sarama.ConsumerGroupSession) error {
-    return nil
-}
-
-func (h *MyHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-    for msg := range claim.Messages() {
-        // Message context includes trace from producer
-        ctx := session.Context()
-
-        // Process message
-        log.Printf("Message: %s", string(msg.Value))
-
-        // Mark message as processed
-        session.MarkMessage(msg, "")
-    }
-    return nil
-}
-
-// Create consumer group
 consumer, err := kafkaagent.NewConsumerGroup(kafkaagent.ConsumerConfig{
     Brokers: []string{"localhost:9092"},
     GroupID: "my-consumer-group",
 })
 defer consumer.Close()
 
-// Wrap handler for automatic tracing
 handler := kafkaagent.WrapConsumerGroupHandler(&MyHandler{})
-
-// Consume messages (automatically traced)
 consumer.Consume(ctx, []string{"my-topic"}, handler)
 ```
 
-## 🌐 HTTP Client Support
+<p>
+Trace context is propagated from producer to consumer automatically. When you receive a message, its context already carries the producer's span as parent.
+</p>
+
+## HTTP Client
 
 ```go
 import (
-    "net/http"
     "net/http/httptrace"
     httpagent "github.com/last9/go-agent/integrations/http"
     "go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace"
 )
 
-// Create instrumented client
 client := httpagent.NewClient(&http.Client{
     Timeout: 10 * time.Second,
 })
 
-// Make request with proper trace nesting
 ctx = httptrace.WithClientTrace(ctx, otelhttptrace.NewClientTrace(ctx))
 req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.example.com/data", nil)
 resp, err := client.Do(req)
 ```
 
-## 📝 Log-Trace Correlation (zap)
+## Log-Trace Correlation
 
-Automatically inject `trace_id` and `span_id` into your zap log entries for log-trace correlation.
+<p>
+The agent injects <code>trace_id</code> and <code>span_id</code> into your log entries so you can jump from a log line directly to its trace. Works with both <code>log/slog</code> and Uber's <code>zap</code>.
+</p>
 
-### Quick Setup — `TraceFields` helper
-
-The simplest way to add trace correlation to existing zap code. No wrapper needed:
+### slog
 
 ```go
-import (
-    "go.uber.org/zap"
-    zapagent "github.com/last9/go-agent/instrumentation/zap"
-)
+import slogagent "github.com/last9/go-agent/instrumentation/slog"
 
-// Add trace fields to any log call
-logger.Info("request handled",
-    zap.String("path", r.URL.Path),
-    zapagent.TraceFields(ctx)...,
-)
-// Output: {"level":"info","msg":"request handled","path":"/api","trace_id":"abc...","span_id":"def..."}
+// One-line global setup
+slogagent.SetDefault(os.Stdout, nil, nil)
+
+// All *Context calls now include trace_id and span_id
+slog.InfoContext(ctx, "processing request", "user_id", 42)
+// Output: {"level":"INFO","msg":"processing request","user_id":42,"trace_id":"abc123...","span_id":"def456..."}
 ```
 
-### Logger Wrapper — `*Context` methods
-
-For a drop-in experience with dedicated context-aware methods:
+Or wrap an existing handler:
 
 ```go
-import (
-    "go.uber.org/zap"
-    zapagent "github.com/last9/go-agent/instrumentation/zap"
-)
-
-func main() {
-    agent.Start()
-    defer agent.Shutdown()
-
-    base, _ := zap.NewProduction()
-    logger := zapagent.New(base, nil)
-
-    // Use *Context methods — trace_id and span_id are injected automatically
-    logger.InfoContext(ctx, "user created", zap.String("user_id", "42"))
-    logger.ErrorContext(ctx, "payment failed", zap.Error(err))
-}
+base := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+handler := slogagent.NewHandler(base, nil)
+logger := slog.New(handler)
 ```
 
-### Chaining with `With` and `Named`
+Custom attribute keys:
 
 ```go
-// Pre-set fields are preserved alongside trace fields
-reqLogger := logger.With(zap.String("service", "api"))
-reqLogger.InfoContext(ctx, "started")
-
-// Named loggers work too
-subLogger := logger.Named("auth")
-subLogger.WarnContext(ctx, "token expiring")
-```
-
-### Custom Attribute Keys
-
-```go
-logger := zapagent.New(base, &zapagent.Options{
+handler := slogagent.NewJSONHandler(os.Stdout, nil, &slogagent.Options{
     TraceKey: "dd.trace_id",
     SpanKey:  "dd.span_id",
 })
 ```
 
-### How It Works
+Trace fields are only injected when you use `*Context` methods (`InfoContext`, `ErrorContext`, etc.) with a context that holds an active span. Calls without context pass through unchanged.
 
-Unlike `log/slog` where `Handle(ctx, record)` receives context directly, zap's `Core.Write(entry, fields)` has no `context.Context` parameter. The go-agent solves this with two approaches:
-
-1. **`TraceFields(ctx)`** — extracts span context and returns `[]zap.Field` that you spread into any log call
-2. **`Logger` wrapper** — provides `InfoContext`, `ErrorContext`, etc. that extract trace fields internally before delegating to the base `*zap.Logger`
-
-```
-┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│ Your Code       │────▶│ zapagent.Logger   │────▶│ *zap.Logger      │
-│                 │     │                   │     │                  │
-│ l.InfoContext(  │     │ extract trace_id  │     │ Info(msg,        │
-│   ctx,          │     │ + span_id from    │     │   ...fields,     │
-│   "msg",        │     │ ctx, append to    │     │   trace_id,      │
-│   fields...,    │     │ fields            │     │   span_id)       │
-│ )               │     │                   │     │                  │
-└─────────────────┘     └──────────────────┘     └──────────────────┘
-```
-
-### Important: Context Propagation
-
-Trace fields are only injected when a valid OpenTelemetry span exists in the context. Make sure your HTTP framework middleware (Gin, Chi, Echo, etc.) is setting up spans, and that you pass the request context through to your log calls.
-
-## 🔗 Log-Trace Correlation
-
-Automatically inject `trace_id` and `span_id` into your `log/slog` log entries, enabling you to jump from a log line to its associated trace and vice versa.
-
-### Quick Setup
+### zap
 
 ```go
-import (
-    "log/slog"
-    "os"
+import zapagent "github.com/last9/go-agent/instrumentation/zap"
 
-    "github.com/last9/go-agent"
-    slogagent "github.com/last9/go-agent/instrumentation/slog"
+// Spread trace fields inline — no wrapper needed
+logger.Info("request handled",
+    zap.String("path", r.URL.Path),
+    zapagent.TraceFields(ctx)...,
 )
-
-func main() {
-    agent.Start()
-    defer agent.Shutdown()
-
-    // One-line setup: sets the global slog logger with trace correlation
-    slogagent.SetDefault(os.Stdout, nil, nil)
-
-    // All slog calls with context now include trace_id and span_id
-    slog.InfoContext(ctx, "processing request", "user_id", 42)
-    // Output: {"time":"...","level":"INFO","msg":"processing request","user_id":42,"trace_id":"abc123...","span_id":"def456..."}
-}
 ```
 
-### Wrap an Existing Handler
+Or use the logger wrapper for context-aware methods:
 
 ```go
-// Wrap any slog.Handler — works with JSON, text, or third-party handlers
-base := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
-handler := slogagent.NewHandler(base, nil)
-logger := slog.New(handler)
+base, _ := zap.NewProduction()
+logger := zapagent.New(base, nil)
 
-logger.InfoContext(ctx, "order created", "order_id", "abc-123")
+logger.InfoContext(ctx, "user created", zap.String("user_id", "42"))
+logger.ErrorContext(ctx, "payment failed", zap.Error(err))
 ```
 
-### Convenience Constructors
+## Metrics
 
-```go
-// JSON handler (most common)
-handler := slogagent.NewJSONHandler(os.Stdout, nil, nil)
+<p>
+Runtime, HTTP, gRPC, database, Kafka, and Redis metrics are collected automatically — no configuration required. For business metrics, the <code>metrics</code> package provides helpers for the four standard instrument types.
+</p>
 
-// Text handler
-handler := slogagent.NewTextHandler(os.Stdout, nil, nil)
-```
-
-### Custom Attribute Keys
-
-Some backends expect different field names. Use `Options` to customize:
-
-```go
-handler := slogagent.NewJSONHandler(os.Stdout, nil, &slogagent.Options{
-    TraceKey: "dd.trace_id",  // Datadog-style
-    SpanKey:  "dd.span_id",
-})
-```
-
-### How It Works
-
-The handler wraps your existing `slog.Handler` and intercepts each log record. When the `context.Context` passed to `slog.InfoContext` (or `ErrorContext`, `WarnContext`, etc.) contains an active OpenTelemetry span, the handler injects `trace_id` and `span_id` as log attributes before delegating to your inner handler.
-
-```
-slog.InfoContext(ctx, "msg")
-        │
-        ▼
-  slogagent.Handler.Handle(ctx, record)
-        │
-        ├── trace.SpanContextFromContext(ctx)
-        ├── sc.IsValid()? → inject trace_id + span_id
-        │
-        ▼
-  inner handler (JSON/text/custom) writes enriched log
-```
-
-- Logs **without** a span context pass through unchanged (no trace fields added)
-- Logs **with** a span context get `trace_id` (32 hex chars) and `span_id` (16 hex chars) appended
-- Sampled-out spans still get their IDs injected (useful for correlating unsampled traces)
-
-### Important: Use `*Context` Methods
-
-Go has no thread-local storage, so trace correlation **requires** passing `context.Context` explicitly. Use the `*Context` variants of slog methods:
-
-```go
-// These WILL have trace correlation:
-slog.InfoContext(ctx, "with trace")
-slog.ErrorContext(ctx, "with trace")
-logger.InfoContext(ctx, "with trace")
-
-// These will NOT (no context = no span = no trace IDs):
-slog.Info("no trace correlation")
-logger.Error("no trace correlation")
-```
-
-### What About the Standard `log` Package?
-
-The standard `log` package (`log.Println`, `log.Printf`) does not support `context.Context` and **cannot** have trace correlation — this is a Go language constraint, not a library limitation. The recommended migration path:
-
-```go
-// Before (no correlation possible)
-log.Printf("processing order %s", orderID)
-
-// After (automatic correlation)
-slog.InfoContext(ctx, "processing order", "order_id", orderID)
-```
-
-## 📊 Metrics Support
-
-The agent automatically collects metrics for all integrated services and provides helpers for custom metrics.
-
-### Automatic Metrics
-
-All integrations collect metrics automatically - no additional code needed:
-
-#### Runtime Metrics (Automatic)
-- `process.runtime.go.mem.heap_alloc` - Heap memory usage
-- `process.runtime.go.goroutines` - Number of goroutines
-- `process.runtime.go.gc.count` - GC cycle count
-- `process.runtime.go.gc.pause_ns` - GC pause duration
-
-#### HTTP/gRPC Metrics (Automatic)
-- `http.server.request.duration` - Server request latency
-- `http.server.request.body.size` - Request size
-- `http.server.response.body.size` - Response size
-- `http.server.active_requests` - Active requests (gauge)
-- `rpc.server.duration` - gRPC server request latency
-- `rpc.server.request.size` - gRPC request size
-- `rpc.server.response.size` - gRPC response size
-
-#### Database Metrics (Automatic)
-- `db.client.connections.usage` - Active connections
-- `db.client.connections.idle` - Idle connections
-- `db.client.connections.max` - Max connections
-- `db.client.connections.wait_time` - Time to acquire connection
-- `db.client.connections.use_time` - Connection usage duration
-- `db.client.connections.idle_time` - Connection idle duration
-
-#### MongoDB Metrics (Automatic)
-- `db.mongodb.operations` - Number of MongoDB operations executed
-- `db.mongodb.errors` - Number of failed MongoDB operations
-- `db.mongodb.operation.duration` - Duration of MongoDB operations (ms)
-
-#### Kafka Metrics (Automatic)
-- `messaging.kafka.messages.sent` - Messages produced
-- `messaging.kafka.messages.received` - Messages consumed
-- `messaging.kafka.messages.errors` - Producer errors
-- `messaging.kafka.receive.errors` - Consumer errors
-- `messaging.kafka.send.duration` - Producer latency
-- `messaging.kafka.process.duration` - Consumer processing time
-- `messaging.kafka.message.size` - Message size distribution
-
-#### Redis Metrics (Automatic)
-Uses [OpenTelemetry Database Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/database/database-metrics/):
-- `db.client.connections.usage` - Number of connections in use
-- `db.client.connections.max` - Maximum number of connections
-- `db.client.connections.idle.max` - Maximum idle connections
-- `db.client.connections.idle.min` - Minimum idle connections
-- `db.client.connections.waits` - Connection wait count
-- `db.client.connections.waits_duration` - Time waiting for connection
-- `db.client.connections.timeouts` - Connection timeout count
-- `db.client.connections.create_time` - Connection creation time
-- `db.client.connections.use_time` - Connection usage time
-
-### Custom Application Metrics
-
-Add your own business metrics using the `metrics` package:
-
-#### Counter - Monotonically increasing values
+### Custom Metrics
 
 ```go
 import "github.com/last9/go-agent/metrics"
 
-// Create counter
+// Counter — monotonically increasing
 requestCounter := metrics.NewCounter(
     "app.requests.total",
     "Total number of requests processed",
     "{request}",
 )
+requestCounter.Inc(ctx, attribute.String("endpoint", "/api/users"))
 
-// Increment
-requestCounter.Inc(ctx,
-    attribute.String("endpoint", "/api/users"),
-    attribute.String("method", "GET"),
-)
-
-// Add specific value
-requestCounter.Add(ctx, 5, attribute.String("batch", "yes"))
-```
-
-#### Histogram - Distribution of values
-
-```go
-// Create histogram for latency
+// Histogram — distribution of values
 latencyHistogram := metrics.NewHistogram(
     "app.processing.duration",
     "Processing duration in milliseconds",
     "ms",
 )
+latencyHistogram.Record(ctx, duration, attribute.String("operation", "compute"))
 
-// Record value
-start := time.Now()
-// ... do work ...
-duration := time.Since(start).Milliseconds()
-latencyHistogram.Record(ctx, duration,
-    attribute.String("operation", "compute"),
-)
-```
-
-#### Gauge - Current value (async callback)
-
-```go
-var activeWorkers int64
-
-// Create gauge with callback
+// Gauge — current value via async callback
 workerGauge := metrics.NewGauge(
     "app.workers.active",
     "Number of active worker goroutines",
@@ -822,266 +392,101 @@ workerGauge := metrics.NewGauge(
     },
 )
 
-// Gauge is automatically updated by callback
-atomic.AddInt64(&activeWorkers, 1)  // Increment
-// ... gauge reflects new value on next collection
-```
-
-#### UpDownCounter - Value that can increase or decrease
-
-```go
-// Create up-down counter for queue
+// UpDownCounter — value that increases and decreases
 queueSize := metrics.NewUpDownCounter(
     "app.queue.size",
     "Number of items in processing queue",
     "{item}",
 )
-
-// Add items
 queueSize.Add(ctx, 10, attribute.String("queue", "high-priority"))
-
-// Remove items (negative value)
 queueSize.Add(ctx, -5, attribute.String("queue", "high-priority"))
 ```
 
-### Metric Units
+Use standard UCUM units: `ms`/`s` for time, `By` for bytes, `{item}`/`{request}` for counts, `%` for percentages.
 
-Use standard UCUM units for consistency:
-- **Time**: `ms` (milliseconds), `s` (seconds)
-- **Bytes**: `By` (bytes), `kBy` (kilobytes), `MBy` (megabytes)
-- **Count**: `{item}`, `{request}`, `{error}`, `{connection}`
-- **Percent**: `%`
+### Automatic Metrics Reference
 
-### Complete Metrics Example
+| Source | Metrics |
+|--------|---------|
+| **Runtime** | heap alloc, goroutines, GC count, GC pause — Go 1.24+ gets the full OTel runtime suite (15+ metrics) |
+| **HTTP/gRPC** | request duration, request/response size, active requests, RPC latency |
+| **Database** | connection pool usage, idle, max, wait/use/idle times |
+| **MongoDB** | operation count, error count, operation duration |
+| **Kafka** | messages sent/received, errors, send/process latency, message size |
+| **Redis** | pool usage, command duration, connection timeouts |
 
-```go
-package main
+## Route Exclusion
 
-import (
-    "context"
-    "time"
+<p>
+Health checks and infrastructure endpoints are excluded from tracing by default. This works across all supported frameworks.
+</p>
 
-    "github.com/last9/go-agent"
-    "github.com/last9/go-agent/metrics"
-    "go.opentelemetry.io/otel/attribute"
-)
+Default excluded paths: `/health`, `/healthz`, `/metrics`, `/ready`, `/live`, `/ping`, and glob variants like `/*/health`.
 
-var (
-    // Business metrics
-    ordersProcessed = metrics.NewCounter(
-        "app.orders.processed",
-        "Total orders processed",
-        "{order}",
-    )
-
-    orderValue = metrics.NewFloatHistogram(
-        "app.order.value",
-        "Order value in USD",
-        "USD",
-    )
-
-    processingDuration = metrics.NewHistogram(
-        "app.order.processing.duration",
-        "Order processing duration",
-        "ms",
-    )
-)
-
-func main() {
-    agent.Start()
-    defer agent.Shutdown()
-
-    ctx := context.Background()
-
-    // Process order
-    start := time.Now()
-    processOrder(ctx, 123.45)
-    duration := time.Since(start).Milliseconds()
-
-    // Record metrics
-    ordersProcessed.Inc(ctx, attribute.String("status", "success"))
-    orderValue.Record(ctx, 123.45, attribute.String("category", "electronics"))
-    processingDuration.Record(ctx, duration)
-}
-
-func processOrder(ctx context.Context, value float64) {
-    // Business logic...
-}
-```
-
-## 🚫 Route Exclusion
-
-The agent automatically skips tracing for common health check and infrastructure endpoints, reducing noise in your traces. This works across all supported frameworks (net/http, Gin, Chi, Echo, Gorilla Mux, gRPC-Gateway).
-
-### Default Excluded Routes
-
-Out of the box, the following paths are excluded from tracing:
-
-- **Exact paths**: `/health`, `/healthz`, `/metrics`, `/ready`, `/live`, `/ping`
-- **Glob patterns**: `/*/health`, `/*/healthz`, `/*/metrics`, `/*/ready`, `/*/live`, `/*/ping`
-
-### Configuration
-
-Three environment variables control route exclusion:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LAST9_EXCLUDED_PATHS` | `/health,/healthz,/metrics,/ready,/live,/ping` | Exact path matches |
-| `LAST9_EXCLUDED_PATH_PREFIXES` | *(none)* | Prefix matches (e.g., `/internal/`) |
-| `LAST9_EXCLUDED_PATH_PATTERNS` | `/*/health,/*/healthz,/*/metrics,/*/ready,/*/live,/*/ping` | Glob patterns using `path.Match` semantics |
-
-### Examples
+Configure via environment variables:
 
 ```bash
-# Add a prefix exclusion for internal debug endpoints
-export LAST9_EXCLUDED_PATH_PREFIXES="/internal/,/debug/"
-
-# Custom exact paths to exclude
+# Exact paths
 export LAST9_EXCLUDED_PATHS="/health,/healthz,/status,/version"
 
-# Disable all default exclusions (trace everything)
+# Prefix exclusions
+export LAST9_EXCLUDED_PATH_PREFIXES="/internal/,/debug/"
+
+# Glob patterns
+export LAST9_EXCLUDED_PATH_PATTERNS="/*/health,/*/metrics"
+
+# Trace everything — disable all defaults
 export LAST9_EXCLUDED_PATHS=""
 export LAST9_EXCLUDED_PATH_PATTERNS=""
 ```
 
-### How It Works
+Matching runs in order: exact path (O(1) map lookup) → prefix → glob. First match wins.
 
-Route matching is evaluated in order: exact match (O(1) map lookup) → prefix match → glob pattern match. The first match wins. Setting an environment variable to an empty string (`""`) disables its defaults, allowing you to opt out of default exclusions.
+## Configuration
 
-## ⚙️ Configuration
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Yes | Last9 OTLP endpoint |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Yes | Authorization header |
+| `OTEL_SERVICE_NAME` | No | Service name (default: `unknown-service`) |
+| `OTEL_SERVICE_VERSION` | No | Service version, e.g. git commit SHA |
+| `OTEL_RESOURCE_ATTRIBUTES` | No | Additional attributes as `key=value` pairs |
+| `OTEL_TRACES_SAMPLER` | No | Sampling strategy (default: `always_on`) |
+| `LAST9_TRACE_SAMPLE_RATE` | No | Probabilistic sample rate, e.g. `0.1` for 10% |
+| `LAST9_EXCLUDED_PATHS` | No | Exact paths excluded from tracing |
+| `LAST9_EXCLUDED_PATH_PREFIXES` | No | Path prefixes excluded from tracing |
+| `LAST9_EXCLUDED_PATH_PATTERNS` | No | Glob patterns excluded from tracing |
 
-The agent reads configuration from environment variables following OpenTelemetry standards:
+The agent automatically detects and records host info, OS, architecture, container ID, and process details as resource attributes.
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Yes | - | Last9 OTLP endpoint |
-| `OTEL_EXPORTER_OTLP_HEADERS` | Yes | - | Authorization header |
-| `OTEL_SERVICE_NAME` | No | `unknown-service` | Service name |
-| `OTEL_SERVICE_VERSION` | No | - | Service version (e.g., git commit SHA) |
-| `OTEL_RESOURCE_ATTRIBUTES` | No | - | Additional attributes (key=value pairs) |
-| `OTEL_TRACES_SAMPLER` | No | `always_on` | Sampling strategy |
-| `LAST9_EXCLUDED_PATHS` | No | `/health,/healthz,...` | Exact paths to exclude from tracing |
-| `LAST9_EXCLUDED_PATH_PREFIXES` | No | - | Path prefixes to exclude from tracing |
-| `LAST9_EXCLUDED_PATH_PATTERNS` | No | `/*/health,/*/healthz,...` | Glob patterns to exclude from tracing |
+## Requirements
 
-### Resource Attributes
+- Go 1.22 or later (1.24+ recommended — full OTel runtime instrumentation)
+- OpenTelemetry Tracing/Metrics API 1.39.0
+- Semantic Conventions v1.26.0
 
-The agent automatically captures:
-- **Service info**: `service.name`, `service.version`
-- **Environment**: `deployment.environment` (defaults to "production")
-- **Host info**: hostname, OS, architecture
-- **Container**: container ID (if running in container)
-- **Process**: process ID, command line
-- **Custom attributes**: Any additional key-value pairs from `OTEL_RESOURCE_ATTRIBUTES`
-
-
-## 📊 What Gets Traced?
-
-### Automatic Instrumentation:
-- ✅ HTTP requests (endpoint, method, status code, duration)
-- ✅ gRPC calls (service, method, status code)
-- ✅ Database queries (query, duration, rows affected)
-- ✅ MongoDB operations (insert, find, update, delete, aggregate)
-- ✅ Redis commands (command, duration)
-- ✅ Kafka messages (topic, partition, offset, context propagation)
-- ✅ External API calls (URL, method, status code)
-- ✅ Errors and exceptions
-- ✅ Distributed trace context propagation
-- ✅ Log-trace correlation (trace_id/span_id injection into slog)
-
-### Automatic Metrics:
-- ✅ **Runtime**: Go memory (heap alloc), goroutines, GC cycles/pause times, CPU time
-- ✅ **HTTP/gRPC**: Request duration, request/response sizes, active requests, RPC latency
-- ✅ **Database**: Connection pool (usage, idle, max, wait/use/idle times)
-- ✅ **MongoDB**: Operations count, errors, operation duration
-- ✅ **Kafka**: Messages sent/received, errors, send/process duration, message sizes
-- ✅ **Redis**: Pool usage, command duration, operation counts
-
-For detailed metrics list and custom metrics, see the [Metrics Support](#-metrics-support) section.
-
-## 🧪 Testing
-
-### Running Tests Locally
-
-The go-agent has comprehensive integration tests that verify instrumentation with real services.
-
-#### Prerequisites
-
-- Docker and Docker Compose (for integration tests)
-- Go 1.22+ installed
-- `buf` CLI (for generating proto files): `go install github.com/bufbuild/buf/cmd/buf@latest`
-
-#### Quick Start
+## Testing
 
 ```bash
-# Run all tests (unit + integration)
-make test
-
-# Run only unit tests (fast, no Docker required)
+# Unit tests — no Docker required
 make test-unit
 
-# Run only integration tests (requires Docker)
-make docker-up          # Start test services
-make test-integration   # Run integration tests
-make docker-down        # Stop test services
+# Integration tests — requires Docker
+make docker-up
+make test-integration
+make docker-down
 ```
 
-#### Manual Setup
+Integration tests require Docker for Postgres, MySQL, Redis, and Kafka. Proto files for gRPC tests are generated via `buf`.
 
-```bash
-# 1. Start test services (Kafka, PostgreSQL, Redis, MySQL)
-docker-compose -f docker-compose.test.yml up -d
+## Contributing
 
-# 2. Wait for services to be ready (automatic in Makefile)
-# Check with: docker-compose -f docker-compose.test.yml ps
+Open an issue first, then fork, branch, and submit a pull request. Run `golangci-lint run --timeout=5m ./...` before pushing.
 
-# 3. Run tests
-go test -v ./...                                    # Unit tests
-go test -v -tags=integration ./tests/integration/  # Integration tests
+## License
 
-# 4. Stop services
-docker-compose -f docker-compose.test.yml down -v
-```
+Apache License 2.0. See [LICENSE](LICENSE).
 
-## 🏗️ Build Tags and Go Version Support
+---
 
-The go-agent uses Go build tags to provide optimal functionality across different Go versions. See [Go Version Feature Matrix](#go-version-feature-matrix) for details on what each version supports.
-
-### How It Works
-The agent automatically detects your Go version at compile time:
-
-```bash
-# Go 1.24+ gets full OTel runtime instrumentation
-go build  # Uses agent_runtime_go124.go
-
-# Go 1.22-1.23 gets basic runtime metrics
-go build  # Uses agent_runtime_legacy.go
-```
-
-### No Configuration Needed
-- ✅ Works transparently based on your Go version
-- ✅ No environment variables or flags required
-- ✅ Compile-time optimization (zero runtime overhead)
-
-## 🤝 Contributing
-
-Contributions welcome! Please:
-1. Check existing issues or create a new one
-2. Fork the repository
-3. Create a feature branch
-4. Submit a pull request
-
-## 📄 License
-
-Apache License 2.0 - see LICENSE file for details
-
-## 🆘 Support
-
-- Documentation: https://last9.io/docs
-- Issues: https://github.com/last9/go-agent/issues
-
-## 🙏 Acknowledgments
-
-Built on top of:
-- [OpenTelemetry Go](https://github.com/open-telemetry/opentelemetry-go)
-- [OpenTelemetry Go Contrib](https://github.com/open-telemetry/opentelemetry-go-contrib)
+Built on [OpenTelemetry Go](https://github.com/open-telemetry/opentelemetry-go) and [opentelemetry-go-contrib](https://github.com/open-telemetry/opentelemetry-go-contrib).
