@@ -22,20 +22,24 @@ import (
 // instrumentation libraries or the Go standard library. Frames matching any
 // of these are skipped when searching for the application call site.
 var skipPrefixes = []string{
-	"go.opentelemetry.io/",
-	"go.nhat.io/",
-	"github.com/last9/go-agent",
+	// Go stdlib
 	"database/sql.",
 	"net/http.",
+	"reflect.",
 	"runtime.",
 	"testing.",
-	"reflect.",
+	// OTel SDK and contrib
+	"go.nhat.io/",
+	"go.opentelemetry.io/",
+	// This agent
+	"github.com/last9/go-agent",
+	// Database / messaging drivers
 	"github.com/IBM/sarama",
-	"github.com/redis/",
-	"go.mongodb.org/",
-	"github.com/aws/aws-sdk-go-v2",
-	"github.com/segmentio/kafka-go",
 	"github.com/Shopify/sarama",
+	"github.com/aws/aws-sdk-go-v2",
+	"github.com/redis/",
+	"github.com/segmentio/kafka-go",
+	"go.mongodb.org/",
 }
 
 // Processor is a SpanProcessor that adds code.* attributes to outbound spans.
@@ -80,8 +84,8 @@ func (p *Processor) ForceFlush(context.Context) error { return nil }
 // callerFrame walks the call stack and returns the first frame that is not
 // part of a known instrumentation or standard library package.
 func callerFrame() (runtime.Frame, bool) {
-	buf, ok := pcPool.Get().(*pcsBuffer)
-	if !ok || buf == nil {
+	buf, _ := pcPool.Get().(*pcsBuffer) //nolint:errcheck
+	if buf == nil {
 		buf = &pcsBuffer{}
 	}
 	defer pcPool.Put(buf)
