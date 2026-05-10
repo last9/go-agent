@@ -19,6 +19,7 @@ This is the SDK path: works anywhere Go runs — VMs, bare metal, Lambda, local 
 - [Quick Start](#quick-start)
 - [Framework Support](#framework-support)
 - [Database Support](#database-support)
+- [ORM Support (GORM)](#orm-support-gorm)
 - [MongoDB](#mongodb)
 - [Redis](#redis)
 - [Kafka](#kafka)
@@ -265,6 +266,62 @@ func (r *UserRepo) FindByID(ctx context.Context, id int) (*User, error) {
     // ... run query
 }
 ```
+
+## ORM Support (GORM)
+
+<p>
+For GORM v2, use the official <a href="https://github.com/go-gorm/opentelemetry"><code>gorm.io/plugin/opentelemetry</code></a> tracing plugin directly. It is maintained by the GORM team, ships current OpenTelemetry semantic conventions, and emits connection-pool metrics out of the box. <code>go-agent</code> does not wrap or replace it — wrapping a maintained upstream plugin would only duplicate work and slow down adoption of upstream improvements.
+</p>
+
+<p>
+Pair the upstream plugin with <code>database.Open</code> from this package and you get two-layer tracing per query: the GORM plugin emits an OTel span for the ORM operation, and <code>integrations/database</code> emits a child span for the wire-level SQL.
+</p>
+
+```go
+import (
+    agent "github.com/last9/go-agent"
+    "github.com/last9/go-agent/integrations/database"
+    _ "github.com/lib/pq"
+    "gorm.io/driver/postgres"
+    "gorm.io/gorm"
+    "gorm.io/plugin/opentelemetry/tracing"
+)
+
+func main() {
+    agent.Start()
+    defer agent.Shutdown()
+
+    sqlDB, err := database.Open(database.Config{
+        DriverName: "postgres",
+        DSN:        os.Getenv("DATABASE_URL"),
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer sqlDB.Close()
+
+    db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    if err := db.Use(tracing.NewPlugin()); err != nil {
+        log.Fatal(err)
+    }
+
+    // Use db normally — pass request contexts via db.WithContext(ctx).
+}
+```
+
+Trace shape:
+
+```
+Gin / HTTP server span
+  └─ select users  (gorm.io/plugin/opentelemetry — db.system.name, db.query.text, db.collection.name)
+        └─ SELECT  (integrations/database — wire-level SQL, rows affected)
+```
+
+A complete docker-compose example with Postgres lives at [opentelemetry-examples/go/gorm](https://github.com/last9/opentelemetry-examples/tree/main/go/gorm).
 
 ## MongoDB
 
