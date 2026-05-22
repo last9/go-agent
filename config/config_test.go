@@ -201,4 +201,117 @@ func TestLoadExcludedPathsCustom(t *testing.T) {
 	}
 }
 
+func TestParseBoolEnv(t *testing.T) {
+	const key = "TEST_PARSE_BOOL_ENV"
+	tests := []struct {
+		val        *string
+		name       string
+		want       bool
+		defaultVal bool
+	}{
+		{nil, "not set uses default true", true, true},
+		{nil, "not set uses default false", false, false},
+		{strPtr("true"), "true", true, false},
+		{strPtr("1"), "1", true, false},
+		{strPtr("TRUE"), "TRUE", true, false},
+		{strPtr("false"), "false", false, true},
+		{strPtr("0"), "0", false, true},
+		{strPtr("yep"), "invalid falls back to default", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			os.Unsetenv(key)
+			if tt.val != nil {
+				os.Setenv(key, *tt.val)
+				defer os.Unsetenv(key)
+			}
+			got := parseBoolEnv(key, tt.defaultVal)
+			if got != tt.want {
+				t.Errorf("parseBoolEnv(%q)=%v (val=%v), want %v", key, got, tt.val, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseInt64Env(t *testing.T) {
+	const key = "TEST_PARSE_INT64_ENV"
+	tests := []struct {
+		val        *string
+		name       string
+		want       int64
+		defaultVal int64
+	}{
+		{nil, "not set uses default", 8192, 8192},
+		{strPtr("1024"), "valid value", 1024, 8192},
+		{strPtr("0"), "zero", 0, 8192},
+		{strPtr("-1"), "negative falls back to default", 8192, 8192},
+		{strPtr("abc"), "non-numeric falls back to default", 8192, 8192},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			os.Unsetenv(key)
+			if tt.val != nil {
+				os.Setenv(key, *tt.val)
+				defer os.Unsetenv(key)
+			}
+			got := parseInt64Env(key, tt.defaultVal)
+			if got != tt.want {
+				t.Errorf("parseInt64Env(%q)=%v (val=%v), want %v", key, got, tt.val, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoad_BodyCapture_Defaults(t *testing.T) {
+	os.Unsetenv("LAST9_BODY_CAPTURE_ENABLED")
+	os.Unsetenv("LAST9_BODY_CAPTURE_MAX_BYTES")
+	os.Unsetenv("LAST9_BODY_CAPTURE_ON_ERROR_ONLY")
+	os.Unsetenv("LAST9_BODY_CAPTURE_CONTENT_TYPES")
+
+	cfg := Load()
+
+	if cfg.BodyCaptureEnabled {
+		t.Error("BodyCaptureEnabled should default to false")
+	}
+	if cfg.BodyCaptureMaxBytes != 8192 {
+		t.Errorf("BodyCaptureMaxBytes = %d, want 8192", cfg.BodyCaptureMaxBytes)
+	}
+	if cfg.BodyCaptureOnErrorOnly {
+		t.Error("BodyCaptureOnErrorOnly should default to false")
+	}
+	want := []string{"application/json", "application/xml", "text/plain"}
+	if !reflect.DeepEqual(cfg.BodyCaptureContentTypes, want) {
+		t.Errorf("BodyCaptureContentTypes = %v, want %v", cfg.BodyCaptureContentTypes, want)
+	}
+}
+
+func TestLoad_BodyCapture_EnvVars(t *testing.T) {
+	os.Setenv("LAST9_BODY_CAPTURE_ENABLED", "true")
+	os.Setenv("LAST9_BODY_CAPTURE_MAX_BYTES", "4096")
+	os.Setenv("LAST9_BODY_CAPTURE_ON_ERROR_ONLY", "true")
+	os.Setenv("LAST9_BODY_CAPTURE_CONTENT_TYPES", "application/json,text/xml")
+	defer func() {
+		os.Unsetenv("LAST9_BODY_CAPTURE_ENABLED")
+		os.Unsetenv("LAST9_BODY_CAPTURE_MAX_BYTES")
+		os.Unsetenv("LAST9_BODY_CAPTURE_ON_ERROR_ONLY")
+		os.Unsetenv("LAST9_BODY_CAPTURE_CONTENT_TYPES")
+	}()
+
+	cfg := Load()
+
+	if !cfg.BodyCaptureEnabled {
+		t.Error("BodyCaptureEnabled should be true")
+	}
+	if cfg.BodyCaptureMaxBytes != 4096 {
+		t.Errorf("BodyCaptureMaxBytes = %d, want 4096", cfg.BodyCaptureMaxBytes)
+	}
+	if !cfg.BodyCaptureOnErrorOnly {
+		t.Error("BodyCaptureOnErrorOnly should be true")
+	}
+	want := []string{"application/json", "text/xml"}
+	if !reflect.DeepEqual(cfg.BodyCaptureContentTypes, want) {
+		t.Errorf("BodyCaptureContentTypes = %v, want %v", cfg.BodyCaptureContentTypes, want)
+	}
+}
+
 func strPtr(s string) *string { return &s }

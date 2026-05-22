@@ -27,6 +27,7 @@ This is the SDK path: works anywhere Go runs — VMs, bare metal, Lambda, local 
 - [Log-Trace Correlation](#log-trace-correlation)
 - [Metrics](#metrics)
 - [Route Exclusion](#route-exclusion)
+- [HTTP Body Capture](#http-body-capture)
 - [Configuration](#configuration)
 - [Testing](#testing)
 
@@ -567,6 +568,96 @@ export LAST9_EXCLUDED_PATH_PATTERNS=""
 
 Matching runs in order: exact path (O(1) map lookup) → prefix → glob. First match wins.
 
+## HTTP Body Capture
+
+<p>
+The <code>httpcapture</code> middleware records HTTP request and response bodies onto the active OTel span as <code>http.request.body</code> and <code>http.response.body</code> attributes. It is framework-agnostic — a single <code>net/http</code> middleware that wraps any handler or router.
+</p>
+
+<p>
+Body capture is opt-in and disabled by default. Enable it only after confirming your payloads do not contain PII or credentials. For production, prefer redacting sensitive fields at the collector layer using a transform processor rather than in the application.
+</p>
+
+```bash
+go get github.com/last9/go-agent/instrumentation/httpcapture
+```
+
+Place `httpcapture.Middleware` **inside** your OTel tracing middleware so the span is already active in context:
+
+### net/http
+
+```go
+import (
+    nethttpagent "github.com/last9/go-agent/instrumentation/nethttp"
+    "github.com/last9/go-agent/instrumentation/httpcapture"
+)
+
+mux := http.NewServeMux()
+mux.HandleFunc("/api", myHandler)
+
+// httpcapture wraps the mux; nethttp wraps httpcapture — span exists before httpcapture runs
+http.ListenAndServe(":8080", nethttpagent.WrapHandler(httpcapture.Middleware(mux)))
+```
+
+### Gin
+
+```go
+import (
+    ginagent "github.com/last9/go-agent/instrumentation/gin"
+    "github.com/last9/go-agent/instrumentation/httpcapture"
+)
+
+r := ginagent.New()
+r.POST("/api", myHandler)
+
+http.ListenAndServe(":8080", httpcapture.Middleware(r))
+```
+
+### Echo
+
+```go
+import (
+    echoagent "github.com/last9/go-agent/instrumentation/echo"
+    "github.com/last9/go-agent/instrumentation/httpcapture"
+)
+
+e := echoagent.New()
+e.POST("/api", myHandler)
+
+http.ListenAndServe(":8080", httpcapture.Middleware(e))
+```
+
+### Configuration
+
+Enable and tune body capture via environment variables:
+
+```bash
+# Enable body capture (default: false)
+export LAST9_BODY_CAPTURE_ENABLED=true
+
+# Maximum bytes captured per body (default: 8192)
+export LAST9_BODY_CAPTURE_MAX_BYTES=4096
+
+# Only capture bodies on error responses — status >= 400 (default: false)
+# No allocation overhead on successful requests when enabled.
+export LAST9_BODY_CAPTURE_ON_ERROR_ONLY=true
+
+# Comma-separated Content-Type prefixes to capture
+# (default: application/json,application/xml,text/plain)
+export LAST9_BODY_CAPTURE_CONTENT_TYPES="application/json,text/plain"
+```
+
+Setting `LAST9_BODY_CAPTURE_CONTENT_TYPES=""` captures all content types. Setting `LAST9_BODY_CAPTURE_MAX_BYTES=0` records no bytes but the middleware overhead still applies — use `LAST9_BODY_CAPTURE_ENABLED=false` to disable entirely.
+
+### Span Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `http.request.body` | Captured request body, truncated to `LAST9_BODY_CAPTURE_MAX_BYTES` |
+| `http.response.body` | Captured response body, truncated to `LAST9_BODY_CAPTURE_MAX_BYTES` |
+
+These attributes are not part of OTel semantic conventions; they follow the convention established by [last9/dotnet-otel-body-capture](https://github.com/last9/dotnet-otel-body-capture).
+
 ## Configuration
 
 | Variable | Required | Description |
@@ -581,6 +672,10 @@ Matching runs in order: exact path (O(1) map lookup) → prefix → glob. First 
 | `LAST9_EXCLUDED_PATHS` | No | Exact paths excluded from tracing |
 | `LAST9_EXCLUDED_PATH_PREFIXES` | No | Path prefixes excluded from tracing |
 | `LAST9_EXCLUDED_PATH_PATTERNS` | No | Glob patterns excluded from tracing |
+| `LAST9_BODY_CAPTURE_ENABLED` | No | Enable HTTP body capture (default: `false`) |
+| `LAST9_BODY_CAPTURE_MAX_BYTES` | No | Max bytes captured per body (default: `8192`) |
+| `LAST9_BODY_CAPTURE_ON_ERROR_ONLY` | No | Capture only on status >= 400 (default: `false`) |
+| `LAST9_BODY_CAPTURE_CONTENT_TYPES` | No | Content-Type prefixes to capture (default: `application/json,application/xml,text/plain`) |
 
 The agent automatically detects and records host info, OS, architecture, container ID, and process details as resource attributes.
 
