@@ -168,6 +168,10 @@ httpMux.Handle("/", gwMux)
 http.ListenAndServe(":8080", grpcgateway.WrapHTTPMux(httpMux, "my-gateway"))
 ```
 
+<p>
+The gRPC-Gateway HTTP layer automatically excludes high-volume infrastructure paths from tracing. Default exclusions: <code>/health</code>, <code>/healthz</code>, <code>/readyz</code>, <code>/livez</code>, <code>/metrics</code> (exact match), and prefix matches for <code>/actuator/</code> and <code>/eureka/apps/</code>. User-configured <code>LAST9_EXCLUDED_PATHS</code> and related variables apply on top of these defaults.
+</p>
+
 ### fasthttp
 
 ```go
@@ -547,7 +551,7 @@ Use standard UCUM units: `ms`/`s` for time, `By` for bytes, `{item}`/`{request}`
 Health checks and infrastructure endpoints are excluded from tracing by default. This works across all supported frameworks.
 </p>
 
-Default excluded paths: `/health`, `/healthz`, `/metrics`, `/ready`, `/live`, `/ping`, and glob variants like `/*/health`.
+Default excluded paths: `/health`, `/healthz`, `/metrics`, `/ready`, `/live`, `/ping`, and glob variants like `/*/health`. The gRPC-Gateway integration uses the same defaults plus `/readyz`, `/livez`, `/actuator/**`, and `/eureka/apps/**`.
 
 Configure via environment variables:
 
