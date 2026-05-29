@@ -238,13 +238,16 @@ func TestGrpcGateway_FullStack_Tracing(t *testing.T) {
 }
 
 func TestGrpcGateway_FullStack_ErrorHandling(t *testing.T) {
-	// Setup mock collector
-	collector := testutil.NewMockCollector()
-	defer collector.Shutdown(context.Background())
-
-	// Initialize agent
+	// agent.Start() must come before NewMockCollector: once.Do fires here and
+	// sets the OTLP provider; NewMockCollector then overwrites it with the
+	// in-memory recorder. Reversing the order causes agent.Start() to overwrite
+	// the mock, leaving 0 spans captured when the test runs in isolation.
 	agent.Start()
 	defer agent.Shutdown()
+
+	// Setup mock collector (overwrites global tracer provider with in-memory recorder)
+	collector := testutil.NewMockCollector()
+	defer collector.Shutdown(context.Background())
 
 	ctx := context.Background()
 
@@ -345,14 +348,16 @@ func TestGrpcGateway_FullStack_ErrorHandling(t *testing.T) {
 	}
 	require.NotNil(t, httpSpan, "HTTP gateway span not found")
 
-	// gRPC server span must carry STATUS_CODE_ERROR
+	// gRPC server span must carry STATUS_CODE_ERROR and an exception event
 	assert.Equal(t, otelcodes.Error, grpcServerSpan.Status().Code,
 		"gRPC server span should have STATUS_CODE_ERROR")
+	testutil.AssertSpanError(t, grpcServerSpan)
 
-	// rpc.grpc.status_code must be non-zero (codes.Internal == 13)
+	// rpc.grpc.status_code must be codes.Internal (13)
 	testutil.AssertSpanAttributeInt(t, grpcServerSpan, "rpc.grpc.status_code", int64(codes.Internal))
 
 	// HTTP gateway span must also reflect the error
 	assert.Equal(t, otelcodes.Error, httpSpan.Status().Code,
 		"HTTP gateway span should have STATUS_CODE_ERROR")
+	testutil.AssertSpanAttributeInt(t, httpSpan, "http.status_code", int64(http.StatusInternalServerError))
 }
