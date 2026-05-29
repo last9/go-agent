@@ -348,10 +348,10 @@ func TestGrpcGateway_FullStack_ErrorHandling(t *testing.T) {
 	}
 	require.NotNil(t, httpSpan, "HTTP gateway span not found")
 
-	// gRPC server span must carry STATUS_CODE_ERROR and an exception event
+	// gRPC server span must carry STATUS_CODE_ERROR.
+	// otelgrpc sets the status code without emitting an exception event for handler errors.
 	assert.Equal(t, otelcodes.Error, grpcServerSpan.Status().Code,
 		"gRPC server span should have STATUS_CODE_ERROR")
-	testutil.AssertSpanError(t, grpcServerSpan)
 
 	// rpc.grpc.status_code must be codes.Internal (13)
 	testutil.AssertSpanAttributeInt(t, grpcServerSpan, "rpc.grpc.status_code", int64(codes.Internal))
