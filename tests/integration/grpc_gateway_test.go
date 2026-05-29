@@ -361,3 +361,95 @@ func TestGrpcGateway_FullStack_ErrorHandling(t *testing.T) {
 		"HTTP gateway span should have STATUS_CODE_ERROR")
 	testutil.AssertSpanAttributeInt(t, httpSpan, "http.status_code", int64(http.StatusInternalServerError))
 }
+
+// TestGrpcGateway_MissingDialOption_ProducesSplitTraces documents the broken
+// behavior when a caller omits grpcgateway.NewDialOption(). Without the client
+// stats handler, no trace context is injected into gRPC metadata; the gRPC
+// server starts a brand-new trace and the two sides end up in separate trace IDs.
+//
+// This is the most common customer misconfiguration, confirmed in production:
+// HTTP gateway SERVER spans and gRPC SERVER spans appeared with matching durations
+// but different trace IDs because NewDialOption() was not passed to grpc.NewClient().
+func TestGrpcGateway_MissingDialOption_ProducesSplitTraces(t *testing.T) {
+	agent.Start()
+	defer agent.Shutdown()
+
+	collector := testutil.NewMockCollector()
+	defer collector.Shutdown(context.Background())
+
+	ctx := context.Background()
+
+	grpcServer := grpcgateway.NewGrpcServer()
+	testproto.RegisterTestServiceServer(grpcServer, &testServer{})
+
+	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	grpcAddr := grpcListener.Addr().String()
+
+	go func() { grpcServer.Serve(grpcListener) }()
+	defer grpcServer.Stop()
+	time.Sleep(500 * time.Millisecond)
+
+	gwMux := grpcgateway.NewGatewayMux()
+
+	// Intentionally omit grpcgateway.NewDialOption() — this is the misconfiguration
+	// being documented. No client stats handler means no trace context propagation.
+	conn, err := grpc.NewClient(grpcAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	err = testproto.RegisterTestServiceHandler(ctx, gwMux, conn)
+	require.NoError(t, err)
+
+	httpMux := http.NewServeMux()
+	httpMux.Handle("/", gwMux)
+	handler := grpcgateway.WrapHTTPMux(httpMux, "test-gateway-no-dial-opt")
+
+	httpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	httpAddr := httpListener.Addr().String()
+
+	httpServer := &http.Server{Handler: handler}
+	go func() { httpServer.Serve(httpListener) }()
+	defer httpServer.Shutdown(ctx)
+	time.Sleep(500 * time.Millisecond)
+
+	requestBody := map[string]string{"name": "World"}
+	jsonBody, err := json.Marshal(requestBody)
+	require.NoError(t, err)
+
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		fmt.Sprintf("http://%s/v1/test/hello", httpAddr),
+		bytes.NewBuffer(jsonBody),
+	)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	time.Sleep(1 * time.Second)
+
+	spans := collector.GetSpans()
+	t.Logf("Captured %d spans", len(spans))
+	for i, s := range spans {
+		t.Logf("Span %d: %s (kind: %v, traceID: %s)", i, s.Name(), s.SpanKind(), s.SpanContext().TraceID())
+	}
+
+	require.GreaterOrEqual(t, len(spans), 2, "should have HTTP and gRPC spans")
+
+	traceIDs := make(map[trace.TraceID]bool)
+	for _, s := range spans {
+		traceIDs[s.SpanContext().TraceID()] = true
+	}
+
+	// Without NewDialOption(), trace context is not propagated into gRPC metadata.
+	// The gRPC server starts a new trace, producing split traces.
+	assert.Greater(t, len(traceIDs), 1,
+		"missing NewDialOption() should produce split traces (multiple trace IDs); "+
+			"fix by passing grpcgateway.NewDialOption() to grpc.NewClient()")
+}
