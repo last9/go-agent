@@ -35,6 +35,22 @@ type Config struct {
 	// Set LAST9_EXCLUDED_PATH_PATTERNS="" to disable defaults.
 	ExcludedPathPatterns []string
 
+	// HTTP body capture configuration (all four fields controlled by LAST9_BODY_CAPTURE_* env vars)
+	BodyCaptureContentTypes []string // LAST9_BODY_CAPTURE_CONTENT_TYPES; default: application/json,application/xml,text/plain
+
+	// BodyCaptureMaxBytes is the maximum bytes captured per body (LAST9_BODY_CAPTURE_MAX_BYTES).
+	// Default: 8192. Set to 0 to capture no bytes (middleware overhead still applies;
+	// use BodyCaptureEnabled=false to disable entirely).
+	BodyCaptureMaxBytes int64
+
+	// BodyCaptureEnabled enables HTTP request/response body capture (LAST9_BODY_CAPTURE_ENABLED).
+	// Default: false — opt-in, bodies may contain PII.
+	BodyCaptureEnabled bool
+
+	// BodyCaptureOnErrorOnly restricts capture to status >= 400 (LAST9_BODY_CAPTURE_ON_ERROR_ONLY).
+	// Default: false.
+	BodyCaptureOnErrorOnly bool
+
 	SampleRate float64
 	// SamplerRatio is the sampling ratio for traceidratio samplers (0.0-1.0).
 	// Only used when Sampler is "traceidratio" or "parentbased_traceidratio".
@@ -61,6 +77,15 @@ func Load() *Config {
 	cfg.ResourceAttributes, cfg.Environment, cfg.ServiceVersion = parseResourceAttributes(
 		os.Getenv("OTEL_RESOURCE_ATTRIBUTES"),
 		cfg.ServiceVersion,
+	)
+
+	// Parse body capture configuration
+	cfg.BodyCaptureEnabled = parseBoolEnv("LAST9_BODY_CAPTURE_ENABLED", false)
+	cfg.BodyCaptureMaxBytes = parseInt64Env("LAST9_BODY_CAPTURE_MAX_BYTES", 8192)
+	cfg.BodyCaptureOnErrorOnly = parseBoolEnv("LAST9_BODY_CAPTURE_ON_ERROR_ONLY", false)
+	cfg.BodyCaptureContentTypes = parseCommaSeparatedWithDefault(
+		"LAST9_BODY_CAPTURE_CONTENT_TYPES",
+		"application/json,application/xml,text/plain",
 	)
 
 	// Parse route exclusion configuration
@@ -168,6 +193,34 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// parseBoolEnv reads an env var as bool. Accepts "true"/"1" (case-insensitive).
+func parseBoolEnv(key string, defaultVal bool) bool {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return defaultVal
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		log.Printf("[Last9 Agent] Warning: Invalid bool for %s=%q, using default %v", key, raw, defaultVal)
+		return defaultVal
+	}
+	return v
+}
+
+// parseInt64Env reads an env var as int64.
+func parseInt64Env(key string, defaultVal int64) int64 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return defaultVal
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || v < 0 {
+		log.Printf("[Last9 Agent] Warning: Invalid int64 for %s=%q, using default %d", key, raw, defaultVal)
+		return defaultVal
+	}
+	return v
 }
 
 // parseSampleRate parses LAST9_TRACE_SAMPLE_RATE into a float64.
