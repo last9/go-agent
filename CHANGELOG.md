@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the Last9 Go Agent will be documented in this file.
+All notable changes to the Last9 Go Agent are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -8,76 +8,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **gRPC-Gateway path exclusion** — `grpcgateway.WrapHTTPMux` now automatically excludes high-volume infrastructure paths from tracing: `/health`, `/healthz`, `/readyz`, `/livez`, `/metrics` (exact match) and `/actuator/`, `/eureka/apps/` (prefix match). User-configured `LAST9_EXCLUDED_PATHS` applies on top.
+- **`instrumentation/httpcapture`** — framework-agnostic `net/http` middleware that records request and response bodies onto the active OTel span as `http.request.body` and `http.response.body`. Opt-in via `LAST9_BODY_CAPTURE_ENABLED=true`. Configurable max bytes, error-only mode, and content-type filtering.
 
-- **`database.ParseDSNAttributes(dsn, driver)`** — public helper that parses a DSN and returns OTel semantic convention attributes (`server.address`, `server.port`, `db.user`, `db.name`). Useful for stamping connection attributes onto manually created wrapper spans, where `database.Open()` auto-attributes (injected via otelsql) are not inherited. Supports `postgres`, `pgx`, `mysql`, `sqlite`, `sqlite3`, and generic URL-style DSNs.
+### Fixed
+- `testutil.AssertSpanNoError` now checks `codes.Error` status code in addition to the error message, catching spans that set status but omit a message.
 
-## [0.1.0] - 2025-01-01
+## [0.3.1] - 2026-05-10
+
+### Changed
+- Bumped `go.opentelemetry.io/otel` and related packages from 1.40.0 to 1.41.0.
+
+### Documentation
+- Documented GORM v2 via the upstream `gorm.io/plugin/opentelemetry` tracing plugin. `go-agent` does not wrap it — the upstream plugin is maintained by the GORM team and ships current OTel semantic conventions.
+
+## [0.3.0] - 2026-04-07
+
+### Added
+- **`instrumentation/grpc`** — drop-in `grpcagent.NewServer()` and `grpcagent.NewClientDialOption()` for automatic OTel tracing on all unary and streaming RPCs.
+- **`instrumentation/fasthttp`** — `fasthttpagent.Middleware()` with native OTel propagation; `fasthttpagent.ContextFromRequest()` for creating child spans inside handlers.
+- **`instrumentation/iris`** — `irisagent.New()` drop-in and `irisagent.Middleware()` for Iris v12, with parametric route template span names.
+- **gRPC-Gateway** — full HTTP/gRPC gateway instrumentation via `grpcgateway.NewGrpcServer()`, `grpcgateway.NewGatewayMux()`, `grpcgateway.NewDialOption()`, and `grpcgateway.WrapHTTPMux()`.
+
+## [0.2.0] - 2026-04-07
+
+### Added
+- **`integrations/database`** — `database.Open()` / `database.MustOpen()` wrapping `sql.Open` with automatic query tracing, connection-pool metrics, and DSN attribute extraction. Supported drivers: `postgres`, `pgx`, `mysql`, `sqlite`, `sqlite3`.
+- **`integrations/database.ParseDSNAttributes`** — public helper to stamp host, port, user, and database name onto manually created repository spans.
+- **`integrations/mongodb`** — `mongoagent.NewClient()` and `mongoagent.Instrument()` tracing all CRUD, aggregation, and index operations; skips connection housekeeping noise. Includes `db.statement` span attribute.
+- **`integrations/http`** — `httpagent.NewClient()` instrumented HTTP client with proper trace nesting.
+- **`instrumentation/beego`** — `beegoagent.New()` and `beegoagent.Middleware()` for Beego v2.
+- **`instrumentation/slog`** — `slogagent.SetDefault()`, `slogagent.NewHandler()`, and `slogagent.NewJSONHandler()` for log-trace correlation via `log/slog`. Injects `trace_id` and `span_id` on `*Context` calls.
+- **`instrumentation/zap`** — `zapagent.TraceFields()` spread helper and `zapagent.New()` context-aware logger wrapper for Uber zap log-trace correlation.
+- **Route exclusion** — `LAST9_EXCLUDED_PATHS`, `LAST9_EXCLUDED_PATH_PREFIXES`, and `LAST9_EXCLUDED_PATH_PATTERNS` environment variables to filter health-check and infrastructure endpoints from tracing. Works across all supported frameworks.
+- **`LAST9_TRACE_SAMPLE_RATE`** — environment variable for probabilistic sampling without a custom `OTEL_TRACES_SAMPLER` config.
+- **Functional options** — programmatic configuration via `agent.WithEndpoint()`, `agent.WithHeaders()`, and related option functions as an alternative to environment variables.
+- **Context helpers** — `agent.ContextWithSpan`, `agent.SpanFromContext`, and related utilities for manual span management.
+- **EC2 resource detection** — automatic detection of EC2 instance metadata via IMDSv2.
+- **AWS SDK v2 instrumentation** — automatic tracing of AWS SDK v2 calls.
+
+### Changed
+- Bumped `go.opentelemetry.io/otel/sdk` from 1.27.0 to 1.40.0.
+
+## [0.1.0] - 2025-12-30
 
 ### Added
 
 #### Core Agent
-- One-line initialization with `agent.Start()` replacing 80-150 lines of OpenTelemetry setup
-- Environment-based configuration using standard OpenTelemetry variables
-- Automatic resource detection (host, OS, container, process info)
-- Graceful shutdown with `agent.Shutdown()`
+- One-line initialization with `agent.Start()` replacing 80–150 lines of OpenTelemetry setup.
+- Environment-based configuration using standard OpenTelemetry variables (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`, etc.).
+- Automatic resource detection: host, OS, architecture, container ID, process info.
+- Graceful shutdown with `agent.Shutdown()`.
 
-#### Web Framework Instrumentation
-- **net/http** - Standard library support with multiple patterns:
-  - `NewServeMux()` for instrumented ServeMux
-  - `WrapHandler()` for wrapping existing handlers
-  - `Handler()`/`HandlerFunc()` for individual handlers
-  - `ListenAndServe()`/`ListenAndServeTLS()` drop-in replacements
-  - Context propagation helpers (`ExtractContext`, `InjectContext`)
-- **Gin** - Drop-in replacements `Default()`, `New()`, and `Middleware()`
-- **Chi** - `New()` instrumented router and `Use()` for existing routers
-- **Echo** - `New()` instrumented Echo instance
-- **Gorilla Mux** - `NewRouter()` instrumented router
-- **gRPC-Gateway** - Full HTTP/gRPC gateway instrumentation:
-  - `NewGrpcServer()` for instrumented gRPC servers
-  - `NewGatewayMux()` for instrumented gateway mux
-  - `NewDialOption()` for instrumented client connections
-  - `WrapHTTPMux()` for HTTP wrapper instrumentation
+#### Web Frameworks
+- **net/http** — `NewServeMux()`, `WrapHandler()`, `Handler()`, `HandlerFunc()`, `ListenAndServe()`, `ListenAndServeTLS()`, and context propagation helpers.
+- **Gin** — `Default()`, `New()`, and `Middleware()` drop-ins.
+- **Chi** — `New()` instrumented router and `Use()` for existing routers.
+- **Echo** — `New()` instrumented instance.
+- **Gorilla Mux** — `NewRouter()` instrumented router.
 
-#### Database Instrumentation
-- PostgreSQL, MySQL, SQLite support via `database.Open()`
-- Automatic query tracing with duration, rows affected
-- Connection pool metrics (usage, idle, max, wait/use/idle times)
-- `MustOpen()` convenience function for quick initialization
+#### Storage
+- **SQL** — `database.Open()` / `database.MustOpen()` for PostgreSQL, MySQL, and SQLite.
+- **Redis** — `redisagent.NewClient()` and `redisagent.NewClusterClient()` with automatic command tracing and pool metrics.
+- **Kafka** — `kafkaagent.NewSyncProducer()` and `kafkaagent.NewConsumerGroup()` with automatic trace-context propagation from producer to consumer.
 
-#### Redis Instrumentation
-- Drop-in replacement `NewClient()` for redis.NewClient()
-- Cluster support with `NewClusterClient()`
-- Automatic command tracing
-- Connection pool metrics following OTel semantic conventions
+#### Metrics
+- **Automatic runtime metrics** — Go 1.24+: full OTel runtime suite (15+ metrics); Go 1.22–1.23: memory, goroutines, GC basics.
+- **Custom metrics helpers** — `metrics.NewCounter()`, `metrics.NewHistogram()`, `metrics.NewFloatHistogram()`, `metrics.NewGauge()`, `metrics.NewUpDownCounter()`.
 
-#### Kafka Instrumentation
-- **Producer**: `NewSyncProducer()` with automatic trace context propagation
-- **Consumer**: `NewConsumerGroup()` with `WrapConsumerGroupHandler()`
-- Automatic metrics: messages sent/received, errors, latencies, message sizes
+#### Testing
+- `testutil` package: mock OTLP collector, span assertions, context helpers.
+- Docker Compose setup for integration tests (Postgres, MySQL, Redis, Kafka).
 
-#### HTTP Client Instrumentation
-- `NewClient()` for instrumented HTTP client
-- Proper trace nesting with external API calls
-- Request/response tracing
-
-#### Metrics Support
-- **Automatic Runtime Metrics**:
-  - Go 1.24+: Full OTel runtime instrumentation (15+ metrics)
-  - Go 1.22-1.23: Basic runtime metrics (memory, goroutines, GC)
-- **Custom Metrics Helpers**:
-  - `NewCounter()` - Monotonically increasing values
-  - `NewHistogram()` / `NewFloatHistogram()` - Distribution of values
-  - `NewGauge()` - Current value with async callback
-  - `NewUpDownCounter()` - Values that can increase or decrease
-
-#### Testing Infrastructure
-- Integration tests for all instrumentations
-- Test utilities (mock OTLP collector, span assertions, context helpers)
-- Docker Compose setup for test services (Kafka, PostgreSQL, MySQL, Redis)
-
-### Technical Details
-- **Go Version**: Minimum 1.22, recommended 1.24+
-- **OpenTelemetry**: Tracing/Metrics API 1.39.0, Semantic Conventions v1.26.0
-- **OTLP Protocol**: HTTP for traces, gRPC for metrics
-
+[Unreleased]: https://github.com/last9/go-agent/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/last9/go-agent/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/last9/go-agent/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/last9/go-agent/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/last9/go-agent/releases/tag/v0.1.0
