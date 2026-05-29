@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -109,8 +110,13 @@ func AssertSpanError(t *testing.T, span sdktrace.ReadOnlySpan) {
 }
 
 // AssertSpanNoError verifies that a span does not have an error recorded.
+// Checks both STATUS_CODE_ERROR and exception events — gRPC spans set the
+// status code without always emitting an exception event.
 func AssertSpanNoError(t *testing.T, span sdktrace.ReadOnlySpan) {
 	t.Helper()
+
+	assert.NotEqual(t, codes.Error, span.Status().Code,
+		"span %q should not have error status", span.Name())
 
 	for _, event := range span.Events() {
 		if event.Name == "exception" {
