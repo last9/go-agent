@@ -5,6 +5,7 @@ package grpcgateway
 import (
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/last9/go-agent"
@@ -14,17 +15,53 @@ import (
 	"google.golang.org/grpc"
 )
 
-// buildHTTPFilterOptions returns otelhttp options with a route exclusion filter
-// if the agent has exclusion rules configured.
-func buildHTTPFilterOptions() []otelhttp.Option {
-	var opts []otelhttp.Option
-	rm := agent.GetRouteMatcher()
-	if !rm.IsEmpty() {
-		opts = append(opts, otelhttp.WithFilter(func(r *http.Request) bool {
-			return !rm.ShouldExclude(r.URL.Path)
-		}))
+// defaultExcludedPaths are exact-match paths excluded from tracing by default.
+// These generate high-volume, zero-value spans (health probes, metrics scrapes).
+var defaultExcludedPaths = []string{
+	"/health",
+	"/healthz",
+	"/readyz",
+	"/livez",
+	"/metrics",
+}
+
+// defaultExcludedPrefixes are prefix-match paths excluded from tracing by default.
+var defaultExcludedPrefixes = []string{
+	"/actuator/",
+	"/eureka/apps/",
+}
+
+// isDefaultExcluded reports whether path matches a default infra exclusion.
+func isDefaultExcluded(path string) bool {
+	for _, p := range defaultExcludedPaths {
+		if path == p {
+			return true
+		}
 	}
-	return opts
+	for _, prefix := range defaultExcludedPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildHTTPFilterOptions returns otelhttp options with a combined filter that
+// excludes default infra paths and any user-configured exclusions.
+func buildHTTPFilterOptions() []otelhttp.Option {
+	rm := agent.GetRouteMatcher()
+	return []otelhttp.Option{
+		otelhttp.WithFilter(func(r *http.Request) bool {
+			path := r.URL.Path
+			if isDefaultExcluded(path) {
+				return false
+			}
+			if !rm.IsEmpty() {
+				return !rm.ShouldExclude(path)
+			}
+			return true
+		}),
+	}
 }
 
 // NewGatewayMux creates a new grpc-gateway ServeMux.
