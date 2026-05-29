@@ -15,10 +15,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	otelcodes "go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/last9/go-agent"
 	"github.com/last9/go-agent/instrumentation/grpcgateway"
@@ -35,6 +38,15 @@ func (s *testServer) SayHello(ctx context.Context, req *testproto.HelloRequest) 
 	return &testproto.HelloResponse{
 		Message: fmt.Sprintf("Hello, %s!", req.Name),
 	}, nil
+}
+
+// errorServer always returns a gRPC Internal error so tests can verify error propagation.
+type errorServer struct {
+	testproto.UnimplementedTestServiceServer
+}
+
+func (s *errorServer) SayHello(_ context.Context, _ *testproto.HelloRequest) (*testproto.HelloResponse, error) {
+	return nil, status.Errorf(codes.Internal, "intentional test error")
 }
 
 func TestGrpcGateway_NewGrpcServer(t *testing.T) {
@@ -226,19 +238,23 @@ func TestGrpcGateway_FullStack_Tracing(t *testing.T) {
 }
 
 func TestGrpcGateway_FullStack_ErrorHandling(t *testing.T) {
-	// Setup mock collector
-	collector := testutil.NewMockCollector()
-	defer collector.Shutdown(context.Background())
-
-	// Initialize agent
+	// agent.Start() must come before NewMockCollector: once.Do fires here and
+	// sets the OTLP provider; NewMockCollector then overwrites it with the
+	// in-memory recorder. Reversing the order causes agent.Start() to overwrite
+	// the mock, leaving 0 spans captured when the test runs in isolation.
 	agent.Start()
 	defer agent.Shutdown()
 
+	// Setup mock collector (overwrites global tracer provider with in-memory recorder)
+	collector := testutil.NewMockCollector()
+	defer collector.Shutdown(context.Background())
+
 	ctx := context.Background()
 
-	// Start gRPC server
+	// Start gRPC server backed by errorServer so the error originates in the handler,
+	// not in grpc-gateway's HTTP transcoding layer.
 	grpcServer := grpcgateway.NewGrpcServer()
-	testproto.RegisterTestServiceServer(grpcServer, &testServer{})
+	testproto.RegisterTestServiceServer(grpcServer, &errorServer{})
 
 	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -281,8 +297,16 @@ func TestGrpcGateway_FullStack_ErrorHandling(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	// Make HTTP request with invalid JSON (should cause error)
-	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("http://%s/v1/test/hello", httpAddr), bytes.NewBufferString("invalid json"))
+	// Send a valid JSON request — the error must come from the gRPC handler, not
+	// from JSON transcoding, so we can verify gRPC error propagation end-to-end.
+	requestBody := map[string]string{"name": "World"}
+	jsonBody, err := json.Marshal(requestBody)
+	require.NoError(t, err)
+
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		fmt.Sprintf("http://%s/v1/test/hello", httpAddr),
+		bytes.NewBuffer(jsonBody),
+	)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -290,15 +314,52 @@ func TestGrpcGateway_FullStack_ErrorHandling(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	// Should get error response
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	// codes.Internal maps to HTTP 500
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 
-	// Wait for spans
+	// Wait for spans to flush
 	time.Sleep(1 * time.Second)
 
-	// Verify spans were captured (even with error)
 	spans := collector.GetSpans()
-	assert.GreaterOrEqual(t, len(spans), 1, "should have at least 1 span for error case")
+	t.Logf("Captured %d spans", len(spans))
+	for i, span := range spans {
+		t.Logf("Span %d: %s (kind: %v, status: %v)", i, span.Name(), span.SpanKind(), span.Status().Code)
+	}
+
+	require.GreaterOrEqual(t, len(spans), 3, "should have HTTP + gRPC client + gRPC server spans")
+
+	// Find gRPC server span
+	var grpcServerSpan sdktrace.ReadOnlySpan
+	for _, span := range spans {
+		if span.Name() == "testproto.TestService/SayHello" && span.SpanKind() == trace.SpanKindServer {
+			grpcServerSpan = span
+			break
+		}
+	}
+	require.NotNil(t, grpcServerSpan, "gRPC server span not found")
+
+	// Find HTTP gateway span
+	var httpSpan sdktrace.ReadOnlySpan
+	for _, span := range spans {
+		if span.SpanKind() == trace.SpanKindServer && span.Name() == "test-gateway-error" {
+			httpSpan = span
+			break
+		}
+	}
+	require.NotNil(t, httpSpan, "HTTP gateway span not found")
+
+	// gRPC server span must carry STATUS_CODE_ERROR.
+	// otelgrpc sets the status code without emitting an exception event for handler errors.
+	assert.Equal(t, otelcodes.Error, grpcServerSpan.Status().Code,
+		"gRPC server span should have STATUS_CODE_ERROR")
+
+	// rpc.grpc.status_code must be codes.Internal (13)
+	testutil.AssertSpanAttributeInt(t, grpcServerSpan, "rpc.grpc.status_code", int64(codes.Internal))
+
+	// HTTP gateway span must also reflect the error
+	assert.Equal(t, otelcodes.Error, httpSpan.Status().Code,
+		"HTTP gateway span should have STATUS_CODE_ERROR")
+	testutil.AssertSpanAttributeInt(t, httpSpan, "http.status_code", int64(http.StatusInternalServerError))
 }
 
 // TestGrpcGateway_MissingDialOption_ProducesSplitTraces documents the broken
