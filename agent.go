@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/last9/go-agent/config"
+	"github.com/last9/go-agent/instrumentation/codeattr"
 	"github.com/last9/go-agent/internal/routematcher"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -311,6 +312,7 @@ func initTracerProvider(res *resource.Resource, cfg *config.Config) (*sdktrace.T
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sampler),
+		sdktrace.WithSpanProcessor(codeattr.New()),
 	)
 
 	return tp, nil
