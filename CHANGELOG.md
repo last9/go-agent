@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-10
+
 ### Added
+- **`instrumentation/codeattr`** — span processor registered automatically by `agent.Start()` that stamps `code.function`, `code.filepath`, and `code.lineno` onto every Client, Producer, and Consumer span by walking the call stack at span creation. Server and Internal spans are skipped. Reuses its frame buffer via `sync.Pool` with no per-span heap allocation; keys use `semconv` v1.25.0 constants.
 - **gRPC-Gateway path exclusion** — `grpcgateway.WrapHTTPMux` now automatically excludes high-volume infrastructure paths from tracing: `/health`, `/healthz`, `/readyz`, `/livez`, `/metrics` (exact match) and `/actuator/`, `/eureka/apps/` (prefix match). User-configured `LAST9_EXCLUDED_PATHS` applies on top.
 - **`instrumentation/httpcapture`** — framework-agnostic `net/http` middleware that records request and response bodies onto the active OTel span as `http.request.body` and `http.response.body`. Opt-in via `LAST9_BODY_CAPTURE_ENABLED=true`. Configurable max bytes, error-only mode, and content-type filtering.
 
@@ -80,7 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `testutil` package: mock OTLP collector, span assertions, context helpers.
 - Docker Compose setup for integration tests (Postgres, MySQL, Redis, Kafka).
 
-[Unreleased]: https://github.com/last9/go-agent/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/last9/go-agent/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/last9/go-agent/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/last9/go-agent/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/last9/go-agent/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/last9/go-agent/compare/v0.1.0...v0.2.0

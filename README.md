@@ -28,6 +28,7 @@ This is the SDK path: works anywhere Go runs — VMs, bare metal, Lambda, local 
 - [Metrics](#metrics)
 - [Route Exclusion](#route-exclusion)
 - [HTTP Body Capture](#http-body-capture)
+- [Code Call-Site Attributes](#code-call-site-attributes)
 - [Configuration](#configuration)
 - [Testing](#testing)
 
@@ -661,6 +662,24 @@ Setting `LAST9_BODY_CAPTURE_CONTENT_TYPES=""` captures all content types. Settin
 | `http.response.body` | Captured response body, truncated to `LAST9_BODY_CAPTURE_MAX_BYTES` |
 
 These attributes are not part of OTel semantic conventions; they follow the convention established by [last9/dotnet-otel-body-capture](https://github.com/last9/dotnet-otel-body-capture).
+
+## Code Call-Site Attributes
+
+<p>
+The agent automatically stamps the source location of each span onto its attributes — no configuration required. <code>agent.Start()</code> registers a span processor that walks the call stack when a span begins and records where in your code it originated.
+</p>
+
+This applies to **Client**, **Producer**, and **Consumer** spans — the outbound calls (HTTP requests, DB queries, message publishes, queue consumes) where knowing the call site speeds up debugging. **Server** and **Internal** spans are skipped to keep overhead off the hot path. The processor reuses its stack-frame buffer via `sync.Pool` and adds no per-span heap allocation.
+
+### Span Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `code.function` | Function that created the span |
+| `code.filepath` | Source file path |
+| `code.lineno` | Line number |
+
+Attribute keys follow OTel semantic conventions (`semconv` v1.25.0). Stack frames inside the standard library, the OTel SDK, the agent itself, and instrumented drivers are skipped so the recorded location points at your application code.
 
 ## Configuration
 
