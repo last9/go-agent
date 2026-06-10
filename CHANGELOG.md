@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-10
+
 ### Added
 - **Distro fingerprint** — `agent.Start()` now stamps `telemetry.distro.name=last9-go-agent` and `telemetry.distro.version` (resolved from build info, falling back to `dev`) onto the OTel resource. This lets the backend distinguish telemetry produced by this agent from a raw OpenTelemetry Go setup and track which agent version each service runs.
 
@@ -86,7 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `testutil` package: mock OTLP collector, span assertions, context helpers.
 - Docker Compose setup for integration tests (Postgres, MySQL, Redis, Kafka).
 
-[Unreleased]: https://github.com/last9/go-agent/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/last9/go-agent/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/last9/go-agent/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/last9/go-agent/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/last9/go-agent/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/last9/go-agent/compare/v0.2.0...v0.3.0
