@@ -700,7 +700,7 @@ Attribute keys follow OTel semantic conventions (`semconv` v1.25.0). Stack frame
 | `LAST9_BODY_CAPTURE_ON_ERROR_ONLY` | No | Capture only on status >= 400 (default: `false`) |
 | `LAST9_BODY_CAPTURE_CONTENT_TYPES` | No | Content-Type prefixes to capture (default: `application/json,application/xml,text/plain`) |
 
-The agent automatically detects and records host info, OS, architecture, container ID, and process details as resource attributes.
+The agent automatically detects and records host info, OS, architecture, container ID, and process details as resource attributes. It also stamps `telemetry.distro.name=last9-go-agent` and `telemetry.distro.version` so telemetry from this agent is identifiable on the backend.
 
 ## Requirements
 

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Distro fingerprint** — `agent.Start()` now stamps `telemetry.distro.name=last9-go-agent` and `telemetry.distro.version` (resolved from build info, falling back to `dev`) onto the OTel resource. This lets the backend distinguish telemetry produced by this agent from a raw OpenTelemetry Go setup and track which agent version each service runs.
+
 ## [0.4.0] - 2026-06-10
 
 ### Added

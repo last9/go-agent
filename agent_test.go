@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/last9/go-agent/config"
+	semconv "go.opentelemetry.io/otel/semconv/v1.25.0"
 )
 
 func TestStart(t *testing.T) {
@@ -431,5 +432,27 @@ func TestParseSamplerRatio(t *testing.T) {
 				t.Errorf("parseSamplerRatio(%q) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCreateResourceStampsDistroAttributes(t *testing.T) {
+	res, err := createResource(&config.Config{ServiceName: "test-service"})
+	if err != nil {
+		t.Fatalf("createResource() failed: %v", err)
+	}
+
+	attrs := make(map[string]string)
+	for _, kv := range res.Attributes() {
+		attrs[string(kv.Key)] = kv.Value.AsString()
+	}
+
+	nameKey := string(semconv.TelemetryDistroName("").Key)
+	if got := attrs[nameKey]; got != "last9-go-agent" {
+		t.Errorf("%s = %q, want %q", nameKey, got, "last9-go-agent")
+	}
+
+	versionKey := string(semconv.TelemetryDistroVersion("").Key)
+	if attrs[versionKey] == "" {
+		t.Errorf("%s should be non-empty", versionKey)
 	}
 }

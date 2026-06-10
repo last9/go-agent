@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -260,12 +261,39 @@ func GetRouteMatcher() *routematcher.RouteMatcher {
 	return nil
 }
 
+// distroName is stamped onto every resource as telemetry.distro.name so that
+// telemetry produced by this agent can be identified on the backend.
+const distroName = "last9-go-agent"
+
+// modulePath is this module's import path, used to locate its version in the
+// build info of the consuming binary.
+const modulePath = "github.com/last9/go-agent"
+
+// distroVersion resolves the version of this agent embedded in the consuming
+// binary via build info. It falls back to "dev" when the version is
+// unavailable, e.g. in local builds or the agent's own test binary.
+func distroVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if ok {
+		for _, dep := range info.Deps {
+			if dep.Path == modulePath && dep.Version != "" {
+				return dep.Version
+			}
+		}
+	}
+	return "dev"
+}
+
 // createResource creates an OpenTelemetry resource with service information
 func createResource(cfg *config.Config) (*resource.Resource, error) {
 	// Build base attributes
 	baseAttrs := []attribute.KeyValue{
 		semconv.ServiceNameKey.String(cfg.ServiceName),
 		semconv.DeploymentEnvironmentKey.String(cfg.Environment),
+		// Fingerprint identifying telemetry as originating from this agent,
+		// so it can be distinguished from a raw OpenTelemetry Go setup.
+		semconv.TelemetryDistroName(distroName),
+		semconv.TelemetryDistroVersion(distroVersion()),
 	}
 
 	// Add service version if available
