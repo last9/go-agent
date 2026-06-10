@@ -21,7 +21,7 @@ test: test-unit test-integration
 # Run unit tests only (fast)
 test-unit:
 	@echo "Running unit tests..."
-	go test -v -race -short ./...
+	go test -v -race -short -tags test ./...
 
 # Run integration tests (requires Docker services)
 test-integration:
