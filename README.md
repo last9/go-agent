@@ -7,7 +7,7 @@
 </p>
 
 <p>
-Last9 Go Agent gives you full observability — distributed traces, runtime metrics, and log-trace correlation — without writing the plumbing yourself. One call to <code>agent.Start()</code> replaces hundreds of lines of OpenTelemetry setup. Every framework integration is a drop-in replacement, not a wrapper you have to bolt on.
+Last9 Go Agent provides distributed traces, runtime metrics, and log-trace correlation. One call to <code>agent.Start()</code> replaces the OpenTelemetry SDK setup boilerplate, and each framework integration is a drop-in replacement for the standard constructor.
 </p>
 
 <p>
@@ -57,7 +57,7 @@ func main() {
 }
 ```
 
-That's it. Traces and metrics start flowing.
+Traces and metrics now export to your configured endpoint.
 
 ## Framework Support
 
@@ -276,7 +276,7 @@ func (r *UserRepo) FindByID(ctx context.Context, id int) (*User, error) {
 ## ORM Support (GORM)
 
 <p>
-For GORM v2, use the official <a href="https://github.com/go-gorm/opentelemetry"><code>gorm.io/plugin/opentelemetry</code></a> tracing plugin directly. It is maintained by the GORM team, ships current OpenTelemetry semantic conventions, and emits connection-pool metrics out of the box. <code>go-agent</code> does not wrap or replace it — wrapping a maintained upstream plugin would only duplicate work and slow down adoption of upstream improvements.
+For GORM v2, use the official <a href="https://github.com/go-gorm/opentelemetry"><code>gorm.io/plugin/opentelemetry</code></a> tracing plugin directly. It is maintained by the GORM team, ships current OpenTelemetry semantic conventions, and emits connection-pool metrics. <code>go-agent</code> does not wrap or replace it.
 </p>
 
 <p>
