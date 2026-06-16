@@ -429,9 +429,9 @@ var (
 // these to itself — not merely to its embedded writer.
 type rwSpy struct {
 	http.ResponseWriter
+	pushed       string
 	hijacked     bool
 	flushed      bool
-	pushed       string
 	readDeadline bool
 }
 
