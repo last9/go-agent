@@ -1,11 +1,15 @@
 package httpcapture
 
 import (
+	"bufio"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/last9/go-agent/config"
 	"go.opentelemetry.io/otel"
@@ -409,19 +413,174 @@ func TestMiddleware_NilBody(t *testing.T) {
 	}
 }
 
-// compile-time check that captureResponseWriter satisfies http.ResponseWriter
-var _ http.ResponseWriter = (*captureResponseWriter)(nil)
+// Compile-time checks that captureResponseWriter satisfies the optional
+// ResponseWriter interfaces it must forward. http.Hijacker is what live tail's
+// WebSocket upgrade depends on (ENG-1278); embedding the http.ResponseWriter
+// interface alone does NOT promote these.
+var (
+	_ http.ResponseWriter = (*captureResponseWriter)(nil)
+	_ http.Hijacker       = (*captureResponseWriter)(nil)
+	_ http.Flusher        = (*captureResponseWriter)(nil)
+	_ http.Pusher         = (*captureResponseWriter)(nil)
+)
 
-// compile-time check that captureResponseWriter promotes http.Flusher when embedded writer supports it
-func TestCaptureResponseWriterFlusherPromotion(t *testing.T) {
-	rec := httptest.NewRecorder()
-	// Only ResponseWriter needed — testing interface promotion, not capture logic.
-	rw := &captureResponseWriter{ResponseWriter: rec}
-	if _, ok := rw.ResponseWriter.(http.Flusher); !ok {
-		t.Skip("httptest.Recorder does not implement http.Flusher in this Go version")
-	}
-	if f, ok := interface{}(rw.ResponseWriter).(http.Flusher); ok {
+// rwSpy is a ResponseWriter that also implements Hijacker, Flusher, and Pusher,
+// recording whether each was forwarded. Used to verify the wrapper promotes
+// these to itself — not merely to its embedded writer.
+type rwSpy struct {
+	http.ResponseWriter
+	pushed       string
+	hijacked     bool
+	flushed      bool
+	readDeadline bool
+}
+
+func (s *rwSpy) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	s.hijacked = true
+	return nil, nil, nil
+}
+
+func (s *rwSpy) Flush() { s.flushed = true }
+
+func (s *rwSpy) Push(target string, _ *http.PushOptions) error {
+	s.pushed = target
+	return nil
+}
+
+// SetReadDeadline is reachable only via http.ResponseController, which walks the
+// wrapper chain through Unwrap(). It is deliberately NOT one of the methods the
+// wrapper forwards explicitly — that is what makes it a test of Unwrap().
+func (s *rwSpy) SetReadDeadline(time.Time) error {
+	s.readDeadline = true
+	return nil
+}
+
+// bareRW implements only http.ResponseWriter — none of the optional interfaces.
+// Used to exercise the unsupported/no-op branches of the forwarders.
+type bareRW struct{ header http.Header }
+
+func (b *bareRW) Header() http.Header         { return b.header }
+func (b *bareRW) Write(p []byte) (int, error) { return len(p), nil }
+func (b *bareRW) WriteHeader(int)             {}
+
+// TestCaptureResponseWriter_InterfacePromotion asserts on the wrapper itself
+// (interface{}(rw).(...)), not on rw.ResponseWriter. This is the assertion the
+// old Flusher test missed, which is why the missing Hijack() slipped through
+// and broke live tail through the body-capture middleware.
+func TestCaptureResponseWriter_InterfacePromotion(t *testing.T) {
+	t.Run("forwards Hijack to embedded writer", func(t *testing.T) {
+		spy := &rwSpy{ResponseWriter: httptest.NewRecorder()}
+		rw := &captureResponseWriter{ResponseWriter: spy}
+
+		hj, ok := interface{}(rw).(http.Hijacker)
+		if !ok {
+			t.Fatal("captureResponseWriter must implement http.Hijacker so WebSocket/SSE upgrades work")
+		}
+		if _, _, err := hj.Hijack(); err != nil {
+			t.Fatalf("Hijack() returned error: %v", err)
+		}
+		if !spy.hijacked {
+			t.Error("Hijack() did not forward to the embedded writer")
+		}
+	})
+
+	t.Run("forwards Flush to embedded writer", func(t *testing.T) {
+		spy := &rwSpy{ResponseWriter: httptest.NewRecorder()}
+		rw := &captureResponseWriter{ResponseWriter: spy}
+
+		f, ok := interface{}(rw).(http.Flusher)
+		if !ok {
+			t.Fatal("captureResponseWriter must implement http.Flusher")
+		}
 		f.Flush()
+		if !spy.flushed {
+			t.Error("Flush() did not forward to the embedded writer")
+		}
+	})
+
+	t.Run("forwards Push to embedded writer", func(t *testing.T) {
+		spy := &rwSpy{ResponseWriter: httptest.NewRecorder()}
+		rw := &captureResponseWriter{ResponseWriter: spy}
+
+		p, ok := interface{}(rw).(http.Pusher)
+		if !ok {
+			t.Fatal("captureResponseWriter must implement http.Pusher")
+		}
+		if err := p.Push("/style.css", nil); err != nil {
+			t.Fatalf("Push() returned error: %v", err)
+		}
+		if spy.pushed != "/style.css" {
+			t.Errorf("Push() forwarded target = %q, want %q", spy.pushed, "/style.css")
+		}
+	})
+
+	t.Run("degrades gracefully when embedded writer supports nothing", func(t *testing.T) {
+		// bareRW implements only http.ResponseWriter.
+		rw := &captureResponseWriter{ResponseWriter: &bareRW{header: http.Header{}}}
+
+		hj, ok := interface{}(rw).(http.Hijacker)
+		if !ok {
+			t.Fatal("captureResponseWriter must implement http.Hijacker")
+		}
+		if _, _, err := hj.Hijack(); !errors.Is(err, http.ErrNotSupported) {
+			t.Errorf("Hijack() err = %v, want http.ErrNotSupported", err)
+		}
+
+		p, ok := interface{}(rw).(http.Pusher)
+		if !ok {
+			t.Fatal("captureResponseWriter must implement http.Pusher")
+		}
+		if err := p.Push("/x", nil); !errors.Is(err, http.ErrNotSupported) {
+			t.Errorf("Push() err = %v, want http.ErrNotSupported", err)
+		}
+
+		f, ok := interface{}(rw).(http.Flusher)
+		if !ok {
+			t.Fatal("captureResponseWriter must implement http.Flusher")
+		}
+		f.Flush() // must be a no-op, not a panic, when the writer cannot flush
+	})
+
+	t.Run("Unwrap lets http.ResponseController reach the underlying writer", func(t *testing.T) {
+		// SetReadDeadline is not forwarded explicitly; ResponseController can only
+		// reach it by walking the chain through Unwrap().
+		spy := &rwSpy{ResponseWriter: httptest.NewRecorder()}
+		rw := &captureResponseWriter{ResponseWriter: spy}
+
+		rc := http.NewResponseController(rw)
+		if err := rc.SetReadDeadline(time.Time{}); err != nil {
+			t.Fatalf("SetReadDeadline via ResponseController returned error: %v", err)
+		}
+		if !spy.readDeadline {
+			t.Error("SetReadDeadline did not reach the underlying writer through Unwrap()")
+		}
+	})
+}
+
+// TestMiddleware_PreservesHijackerThroughChain verifies the writer the handler
+// actually receives from newMiddleware still satisfies http.Hijacker and that
+// Hijack() reaches the real underlying writer. This guards the construction site
+// itself — a refactor that dropped the wrapping (or wrapped in a type without
+// the forwarders) would regress ENG-1278 even if the captureResponseWriter unit
+// tests still passed.
+func TestMiddleware_PreservesHijackerThroughChain(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("handler's ResponseWriter is not an http.Hijacker")
+			return
+		}
+		if _, _, err := hj.Hijack(); err != nil {
+			t.Errorf("Hijack() returned error: %v", err)
+		}
+	})
+
+	spy := &rwSpy{ResponseWriter: httptest.NewRecorder()}
+	mw := newMiddleware(handler, defaultCfg())
+	mw.ServeHTTP(spy, httptest.NewRequest("GET", "/", nil))
+
+	if !spy.hijacked {
+		t.Error("Hijack() did not reach the underlying writer through the middleware chain")
 	}
 }
 

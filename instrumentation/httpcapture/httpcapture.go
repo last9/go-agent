@@ -37,8 +37,10 @@
 package httpcapture
 
 import (
+	"bufio"
 	"bytes"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
@@ -108,7 +110,14 @@ func newMiddleware(next http.Handler, cfg *config.Config) http.Handler {
 }
 
 // captureResponseWriter wraps http.ResponseWriter to record status code and body.
-// Embedding preserves interface promotions (http.Flusher, http.Hijacker, etc.).
+//
+// It embeds the http.ResponseWriter *interface*, which promotes only Header,
+// Write, and WriteHeader — NOT the optional interfaces (http.Hijacker,
+// http.Flusher, http.Pusher) that the concrete underlying writer may implement.
+// Those are forwarded explicitly below; without Hijack() in particular, wrapping
+// this middleware around a handler breaks WebSocket/SSE upgrades (ENG-1278).
+// Unwrap() additionally lets http.ResponseController reach the underlying
+// writer's deadline/full-duplex methods that are not forwarded explicitly.
 //
 // When onErrorOnly=true, buf is allocated lazily in WriteHeader only for error responses,
 // keeping the successful-request path allocation-free.
@@ -145,6 +154,41 @@ func (rw *captureResponseWriter) Write(b []byte) (int, error) {
 		_, _ = rw.buf.Write(b)
 	}
 	return rw.ResponseWriter.Write(b)
+}
+
+// Hijack forwards to the embedded writer's Hijack when supported, letting a
+// handler take over the connection (WebSocket upgrades, SSE). Returns
+// http.ErrNotSupported when the underlying writer is not an http.Hijacker.
+func (rw *captureResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
+}
+
+// Flush forwards to the embedded writer's Flush when supported, so streaming
+// responses are not buffered by this wrapper. No-op otherwise.
+func (rw *captureResponseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Push forwards HTTP/2 server push to the embedded writer when supported.
+// Returns http.ErrNotSupported when the underlying writer is not an http.Pusher.
+func (rw *captureResponseWriter) Push(target string, opts *http.PushOptions) error {
+	if p, ok := rw.ResponseWriter.(http.Pusher); ok {
+		return p.Push(target, opts)
+	}
+	return http.ErrNotSupported
+}
+
+// Unwrap exposes the wrapped writer so http.ResponseController can walk the
+// chain to reach optional methods this wrapper does not forward explicitly —
+// notably SetReadDeadline/SetWriteDeadline/EnableFullDuplex, which long-lived
+// SSE and WebSocket handlers use for idle timeouts.
+func (rw *captureResponseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
 }
 
 // limitedBuffer is a bytes.Buffer that stops accepting writes after max bytes.
