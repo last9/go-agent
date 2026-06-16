@@ -116,6 +116,8 @@ func newMiddleware(next http.Handler, cfg *config.Config) http.Handler {
 // http.Flusher, http.Pusher) that the concrete underlying writer may implement.
 // Those are forwarded explicitly below; without Hijack() in particular, wrapping
 // this middleware around a handler breaks WebSocket/SSE upgrades (ENG-1278).
+// Unwrap() additionally lets http.ResponseController reach the underlying
+// writer's deadline/full-duplex methods that are not forwarded explicitly.
 //
 // When onErrorOnly=true, buf is allocated lazily in WriteHeader only for error responses,
 // keeping the successful-request path allocation-free.
@@ -179,6 +181,14 @@ func (rw *captureResponseWriter) Push(target string, opts *http.PushOptions) err
 		return p.Push(target, opts)
 	}
 	return http.ErrNotSupported
+}
+
+// Unwrap exposes the wrapped writer so http.ResponseController can walk the
+// chain to reach optional methods this wrapper does not forward explicitly —
+// notably SetReadDeadline/SetWriteDeadline/EnableFullDuplex, which long-lived
+// SSE and WebSocket handlers use for idle timeouts.
+func (rw *captureResponseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
 }
 
 // limitedBuffer is a bytes.Buffer that stops accepting writes after max bytes.
