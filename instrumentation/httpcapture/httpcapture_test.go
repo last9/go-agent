@@ -1,7 +1,9 @@
 package httpcapture
 
 import (
+	"bufio"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -409,20 +411,104 @@ func TestMiddleware_NilBody(t *testing.T) {
 	}
 }
 
-// compile-time check that captureResponseWriter satisfies http.ResponseWriter
-var _ http.ResponseWriter = (*captureResponseWriter)(nil)
+// Compile-time checks that captureResponseWriter satisfies the optional
+// ResponseWriter interfaces it must forward. http.Hijacker is what live tail's
+// WebSocket upgrade depends on (ENG-1278); embedding the http.ResponseWriter
+// interface alone does NOT promote these.
+var (
+	_ http.ResponseWriter = (*captureResponseWriter)(nil)
+	_ http.Hijacker       = (*captureResponseWriter)(nil)
+	_ http.Flusher        = (*captureResponseWriter)(nil)
+	_ http.Pusher         = (*captureResponseWriter)(nil)
+)
 
-// compile-time check that captureResponseWriter promotes http.Flusher when embedded writer supports it
-func TestCaptureResponseWriterFlusherPromotion(t *testing.T) {
-	rec := httptest.NewRecorder()
-	// Only ResponseWriter needed — testing interface promotion, not capture logic.
-	rw := &captureResponseWriter{ResponseWriter: rec}
-	if _, ok := rw.ResponseWriter.(http.Flusher); !ok {
-		t.Skip("httptest.Recorder does not implement http.Flusher in this Go version")
-	}
-	if f, ok := interface{}(rw.ResponseWriter).(http.Flusher); ok {
+// rwSpy is a ResponseWriter that also implements Hijacker, Flusher, and Pusher,
+// recording whether each was forwarded. Used to verify the wrapper promotes
+// these to itself — not merely to its embedded writer.
+type rwSpy struct {
+	http.ResponseWriter
+	hijacked bool
+	flushed  bool
+	pushed   string
+}
+
+func (s *rwSpy) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	s.hijacked = true
+	return nil, nil, nil
+}
+
+func (s *rwSpy) Flush() { s.flushed = true }
+
+func (s *rwSpy) Push(target string, _ *http.PushOptions) error {
+	s.pushed = target
+	return nil
+}
+
+// TestCaptureResponseWriter_InterfacePromotion asserts on the wrapper itself
+// (interface{}(rw).(...)), not on rw.ResponseWriter. This is the assertion the
+// old Flusher test missed, which is why the missing Hijack() slipped through
+// and broke live tail through the body-capture middleware.
+func TestCaptureResponseWriter_InterfacePromotion(t *testing.T) {
+	t.Run("forwards Hijack to embedded writer", func(t *testing.T) {
+		spy := &rwSpy{ResponseWriter: httptest.NewRecorder()}
+		rw := &captureResponseWriter{ResponseWriter: spy}
+
+		hj, ok := interface{}(rw).(http.Hijacker)
+		if !ok {
+			t.Fatal("captureResponseWriter must implement http.Hijacker so WebSocket/SSE upgrades work")
+		}
+		if _, _, err := hj.Hijack(); err != nil {
+			t.Fatalf("Hijack() returned error: %v", err)
+		}
+		if !spy.hijacked {
+			t.Error("Hijack() did not forward to the embedded writer")
+		}
+	})
+
+	t.Run("forwards Flush to embedded writer", func(t *testing.T) {
+		spy := &rwSpy{ResponseWriter: httptest.NewRecorder()}
+		rw := &captureResponseWriter{ResponseWriter: spy}
+
+		f, ok := interface{}(rw).(http.Flusher)
+		if !ok {
+			t.Fatal("captureResponseWriter must implement http.Flusher")
+		}
 		f.Flush()
-	}
+		if !spy.flushed {
+			t.Error("Flush() did not forward to the embedded writer")
+		}
+	})
+
+	t.Run("forwards Push to embedded writer", func(t *testing.T) {
+		spy := &rwSpy{ResponseWriter: httptest.NewRecorder()}
+		rw := &captureResponseWriter{ResponseWriter: spy}
+
+		p, ok := interface{}(rw).(http.Pusher)
+		if !ok {
+			t.Fatal("captureResponseWriter must implement http.Pusher")
+		}
+		if err := p.Push("/style.css", nil); err != nil {
+			t.Fatalf("Push() returned error: %v", err)
+		}
+		if spy.pushed != "/style.css" {
+			t.Errorf("Push() forwarded target = %q, want %q", spy.pushed, "/style.css")
+		}
+	})
+
+	t.Run("Hijack returns ErrNotSupported when embedded writer cannot hijack", func(t *testing.T) {
+		// httptest.Recorder implements neither Hijacker nor Pusher.
+		rw := &captureResponseWriter{ResponseWriter: httptest.NewRecorder()}
+
+		hj := interface{}(rw).(http.Hijacker)
+		if _, _, err := hj.Hijack(); err != http.ErrNotSupported {
+			t.Errorf("Hijack() err = %v, want http.ErrNotSupported", err)
+		}
+
+		p := interface{}(rw).(http.Pusher)
+		if err := p.Push("/x", nil); err != http.ErrNotSupported {
+			t.Errorf("Push() err = %v, want http.ErrNotSupported", err)
+		}
+	})
 }
 
 func TestMiddleware_SpanAttributes(t *testing.T) {
