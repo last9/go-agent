@@ -51,6 +51,19 @@ type Config struct {
 	// Default: false.
 	BodyCaptureOnErrorOnly bool
 
+	// HTTP header capture configuration (LAST9_HEADER_CAPTURE_REQUEST / LAST9_HEADER_CAPTURE_RESPONSE).
+	//
+	// CaptureRequestHeaders is an allowlist of request header names captured onto
+	// the span as http.request.header.<normalized> (LAST9_HEADER_CAPTURE_REQUEST).
+	// Default: empty (disabled). Comma-separated, case-insensitive. Names are
+	// stored verbatim here and normalized to canonical/OTel form at middleware use.
+	CaptureRequestHeaders []string
+
+	// CaptureResponseHeaders is the response-side equivalent, captured as
+	// http.response.header.<normalized> (LAST9_HEADER_CAPTURE_RESPONSE).
+	// Default: empty (disabled). Comma-separated, case-insensitive.
+	CaptureResponseHeaders []string
+
 	SampleRate float64
 	// SamplerRatio is the sampling ratio for traceidratio samplers (0.0-1.0).
 	// Only used when Sampler is "traceidratio" or "parentbased_traceidratio".
@@ -87,6 +100,10 @@ func Load() *Config {
 		"LAST9_BODY_CAPTURE_CONTENT_TYPES",
 		"application/json,application/xml,text/plain",
 	)
+
+	// Parse header capture allowlists (empty/unset = disabled).
+	cfg.CaptureRequestHeaders = parseCommaSeparatedWithDefault("LAST9_HEADER_CAPTURE_REQUEST", "")
+	cfg.CaptureResponseHeaders = parseCommaSeparatedWithDefault("LAST9_HEADER_CAPTURE_RESPONSE", "")
 
 	// Parse route exclusion configuration
 	cfg.ExcludedPaths = parseCommaSeparatedWithDefault(

@@ -23,11 +23,26 @@
 //	LAST9_BODY_CAPTURE_MAX_BYTES       integer > 0         (default: 8192)
 //	LAST9_BODY_CAPTURE_ON_ERROR_ONLY   true/false          (default: false)
 //	LAST9_BODY_CAPTURE_CONTENT_TYPES   comma-separated     (default: application/json,application/xml,text/plain)
+//	LAST9_HEADER_CAPTURE_REQUEST      comma-separated     (default: empty/disabled)
+//	LAST9_HEADER_CAPTURE_RESPONSE     comma-separated     (default: empty/disabled)
 //
 // Span attributes set:
 //
-//	http.request.body   — captured request body (truncated to LAST9_BODY_CAPTURE_MAX_BYTES)
-//	http.response.body  — captured response body (truncated to LAST9_BODY_CAPTURE_MAX_BYTES)
+//	http.request.body            — captured request body (truncated to LAST9_BODY_CAPTURE_MAX_BYTES)
+//	http.response.body           — captured response body (truncated to LAST9_BODY_CAPTURE_MAX_BYTES)
+//	http.request.header.<key>    — allowlisted request header values (StringSlice)
+//	http.response.header.<key>   — allowlisted response header values (StringSlice)
+//
+// Header capture is independent of body capture: set either allowlist and headers
+// are captured even when LAST9_BODY_CAPTURE_ENABLED is false, and are not subject
+// to LAST9_BODY_CAPTURE_ON_ERROR_ONLY. <key> is the header name normalized exactly
+// as the OpenTelemetry Go SDK does: lowercased with '-' replaced by '_'
+// (X-Last9-Client -> http.request.header.x_last9_client).
+//
+// WARNING: header values are captured verbatim onto spans. Do NOT allowlist
+// credential-bearing headers (Authorization, Proxy-Authorization, Cookie,
+// Set-Cookie, X-Api-Key, etc.) — traces often flow to lower-trust backends.
+// Prefer redacting at the collector if such capture is unavoidable.
 //
 // Note: http.request.body and http.response.body are not in OTel semconv; they follow
 // the convention established by last9/dotnet-otel-body-capture.
@@ -51,20 +66,33 @@ import (
 )
 
 // Middleware returns an http.Handler middleware that captures request/response
-// bodies onto the active OTel span as http.request.body and http.response.body.
+// bodies (and allowlisted headers) onto the active OTel span.
 //
 // Config is read once at construction time from agent.GetConfig().
-// No-ops when LAST9_BODY_CAPTURE_ENABLED is false (default) or no span is recording.
+// No-ops when body capture is disabled AND no header allowlist is configured
+// (the default), or when no span is recording.
 func Middleware(next http.Handler) http.Handler {
 	return newMiddleware(next, agent.GetConfig())
 }
 
 // newMiddleware is the testable core; Middleware delegates here.
 func newMiddleware(next http.Handler, cfg *config.Config) http.Handler {
-	if cfg == nil || !cfg.BodyCaptureEnabled {
+	if cfg == nil {
 		return next
 	}
 
+	// Header capture is independent of body capture: the middleware activates if
+	// EITHER is configured. Allowlists are normalized to full OTel attribute keys
+	// once at construction (no per-request string work).
+	reqHeaderKeys := normalizeHeaderKeys("http.request.header.", cfg.CaptureRequestHeaders)
+	respHeaderKeys := normalizeHeaderKeys("http.response.header.", cfg.CaptureResponseHeaders)
+	headerCaptureOn := len(reqHeaderKeys) > 0 || len(respHeaderKeys) > 0
+
+	if !cfg.BodyCaptureEnabled && !headerCaptureOn {
+		return next
+	}
+
+	bodyCapture := cfg.BodyCaptureEnabled
 	maxBytes := cfg.BodyCaptureMaxBytes
 	onErrorOnly := cfg.BodyCaptureOnErrorOnly
 	contentTypes := cfg.BodyCaptureContentTypes
@@ -72,29 +100,48 @@ func newMiddleware(next http.Handler, cfg *config.Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Capture request body via TeeReader — handler still reads the original stream.
 		var reqBodyBuf *limitedBuffer
-		if r.Body != nil && isAllowedContentType(r.Header.Get("Content-Type"), contentTypes) {
+		if bodyCapture && r.Body != nil && isAllowedContentType(r.Header.Get("Content-Type"), contentTypes) {
 			reqBodyBuf = newLimitedBuffer(maxBytes)
 			r.Body = io.NopCloser(io.TeeReader(r.Body, reqBodyBuf))
 		}
 
 		// Wrap response writer. When onErrorOnly=true, buf is nil until WriteHeader
-		// receives a status >= 400 — no allocation on the happy path.
+		// receives a status >= 400 — no allocation on the happy path. Response
+		// headers (if allowlisted) are snapshotted at WriteHeader time.
 		rw := &captureResponseWriter{
 			ResponseWriter: w,
+			respHeaderKeys: respHeaderKeys,
 			maxBytes:       maxBytes,
 			contentTypes:   contentTypes,
 			onErrorOnly:    onErrorOnly,
+			bodyCapture:    bodyCapture,
 			status:         http.StatusOK,
 		}
 
 		next.ServeHTTP(rw, r)
 
-		if onErrorOnly && rw.status < 400 {
+		span := trace.SpanFromContext(r.Context())
+		if !span.IsRecording() {
 			return
 		}
 
-		span := trace.SpanFromContext(r.Context())
-		if !span.IsRecording() {
+		// Header attrs are NOT gated by onErrorOnly (headers are not bodies) and
+		// are set regardless of whether body capture is enabled.
+		if len(reqHeaderKeys) > 0 {
+			span.SetAttributes(headerAttrs(reqHeaderKeys, r.Header)...)
+		}
+		// Response headers are normally snapshotted in WriteHeader. A handler that
+		// sets headers but returns without ever calling Write/WriteHeader still
+		// sends them via net/http's implicit 200 — capture those here as a fallback.
+		if len(respHeaderKeys) > 0 && !rw.wroteHeader {
+			rw.respHeaderAttrs = headerAttrs(respHeaderKeys, rw.Header())
+		}
+		if len(rw.respHeaderAttrs) > 0 {
+			span.SetAttributes(rw.respHeaderAttrs...)
+		}
+
+		// Body attrs keep the onErrorOnly gate.
+		if onErrorOnly && rw.status < 400 {
 			return
 		}
 
@@ -107,6 +154,49 @@ func newMiddleware(next http.Handler, cfg *config.Config) http.Handler {
 			span.SetAttributes(attribute.String("http.response.body", rw.buf.String()))
 		}
 	})
+}
+
+// normalizeHeaderKeys maps each allowlisted header's canonical (textproto) name
+// to its full OTel attribute key. The key normalization mirrors the OpenTelemetry
+// Go SDK's semconv header() helper exactly — lowercase, then '-' replaced by '_',
+// prefixed — so keys are byte-identical to what otelhttp emits (X-Last9-Client +
+// "http.request.header." -> http.request.header.x_last9_client). Baking the full
+// key in at construction keeps per-request work to a map lookup. The canonical
+// name is the map key for http.Header.Values lookups. Empty names are skipped;
+// returns nil for empty input.
+func normalizeHeaderKeys(prefix string, names []string) map[string]string {
+	if len(names) == 0 {
+		return nil
+	}
+	m := make(map[string]string, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		canonical := http.CanonicalHeaderKey(name)
+		m[canonical] = prefix + strings.ReplaceAll(strings.ToLower(canonical), "-", "_")
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// headerAttrs builds span attributes for the allowlisted headers present in h.
+// HTTP headers are multi-valued, so each is recorded as a StringSlice under its
+// full attribute key (e.g. http.request.header.x_last9_client).
+func headerAttrs(keys map[string]string, h http.Header) []attribute.KeyValue {
+	if len(keys) == 0 {
+		return nil
+	}
+	attrs := make([]attribute.KeyValue, 0, len(keys))
+	for canonical, attrKey := range keys {
+		if vals := h.Values(canonical); len(vals) > 0 {
+			attrs = append(attrs, attribute.StringSlice(attrKey, vals))
+		}
+	}
+	return attrs
 }
 
 // captureResponseWriter wraps http.ResponseWriter to record status code and body.
@@ -125,12 +215,15 @@ func newMiddleware(next http.Handler, cfg *config.Config) http.Handler {
 // Field ordering is optimized for GC pointer scan bytes (pointer fields precede scalars).
 type captureResponseWriter struct {
 	http.ResponseWriter
-	buf             *limitedBuffer // nil until WriteHeader when onErrorOnly=true
-	respContentType string         // Content-Type snapshotted at WriteHeader time
+	buf             *limitedBuffer       // nil until WriteHeader when onErrorOnly=true
+	respHeaderKeys  map[string]string    // allowlist of response headers (canonical->suffix), nil if none
+	respHeaderAttrs []attribute.KeyValue // allowlisted response headers snapshotted at WriteHeader time
+	respContentType string               // Content-Type snapshotted at WriteHeader time
 	contentTypes    []string
 	maxBytes        int64
 	status          int
 	onErrorOnly     bool
+	bodyCapture     bool
 	wroteHeader     bool
 }
 
@@ -139,8 +232,13 @@ func (rw *captureResponseWriter) WriteHeader(code int) {
 		rw.status = code
 		rw.wroteHeader = true
 		rw.respContentType = rw.Header().Get("Content-Type")
-		if !rw.onErrorOnly || code >= 400 {
+		if rw.bodyCapture && (!rw.onErrorOnly || code >= 400) {
 			rw.buf = newLimitedBuffer(rw.maxBytes)
+		}
+		// Snapshot response headers now: modifying the map after WriteHeader has
+		// no effect on the wire, so this captures exactly what was sent.
+		if len(rw.respHeaderKeys) > 0 {
+			rw.respHeaderAttrs = headerAttrs(rw.respHeaderKeys, rw.Header())
 		}
 	}
 	rw.ResponseWriter.WriteHeader(code)

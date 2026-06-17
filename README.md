@@ -27,7 +27,7 @@ This is the SDK path: works anywhere Go runs — VMs, bare metal, Lambda, local 
 - [Log-Trace Correlation](#log-trace-correlation)
 - [Metrics](#metrics)
 - [Route Exclusion](#route-exclusion)
-- [HTTP Body Capture](#http-body-capture)
+- [HTTP Body and Header Capture](#http-body-and-header-capture)
 - [Code Call-Site Attributes](#code-call-site-attributes)
 - [Configuration](#configuration)
 - [Testing](#testing)
@@ -573,10 +573,10 @@ export LAST9_EXCLUDED_PATH_PATTERNS=""
 
 Matching runs in order: exact path (O(1) map lookup) → prefix → glob. First match wins.
 
-## HTTP Body Capture
+## HTTP Body and Header Capture
 
 <p>
-The <code>httpcapture</code> middleware records HTTP request and response bodies onto the active OTel span as <code>http.request.body</code> and <code>http.response.body</code> attributes. It is framework-agnostic — a single <code>net/http</code> middleware that wraps any handler or router.
+The <code>httpcapture</code> middleware records HTTP request and response bodies onto the active OTel span as <code>http.request.body</code> and <code>http.response.body</code> attributes, and optionally captures allowlisted request/response <strong>headers</strong> as <code>http.request.header.&lt;key&gt;</code> / <code>http.response.header.&lt;key&gt;</code>. It is framework-agnostic — a single <code>net/http</code> middleware that wraps any handler or router.
 </p>
 
 <p>
@@ -654,14 +654,32 @@ export LAST9_BODY_CAPTURE_CONTENT_TYPES="application/json,text/plain"
 
 Setting `LAST9_BODY_CAPTURE_CONTENT_TYPES=""` captures all content types. Setting `LAST9_BODY_CAPTURE_MAX_BYTES=0` records no bytes but the middleware overhead still applies — use `LAST9_BODY_CAPTURE_ENABLED=false` to disable entirely.
 
+### Header Capture
+
+Capture specific request/response headers as span attributes via comma-separated allowlists. Header capture is **independent of body capture** — it activates when either allowlist is set, even with `LAST9_BODY_CAPTURE_ENABLED=false`, and is not subject to `LAST9_BODY_CAPTURE_ON_ERROR_ONLY`.
+
+```bash
+# Allowlisted request headers (default: empty/disabled)
+export LAST9_HEADER_CAPTURE_REQUEST="X-Last9-Client,X-Last9-MCP-Version"
+
+# Allowlisted response headers (default: empty/disabled)
+export LAST9_HEADER_CAPTURE_RESPONSE="X-Request-Id"
+```
+
+Each header lands as a string-slice attribute named after the [OTel HTTP semantic convention](https://opentelemetry.io/docs/specs/semconv/http/http-spans/), normalized exactly as the OpenTelemetry Go SDK does: the header name is lowercased with `-` replaced by `_`. For example `X-Last9-Client` becomes `http.request.header.x_last9_client` (identical to what `otelhttp` emits). Header matching is case-insensitive; non-allowlisted headers are never captured.
+
+> **Security:** header values are recorded verbatim onto spans, which often flow to lower-trust backends than application logs. Do **not** allowlist credential-bearing headers (`Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, …). If such capture is unavoidable, redact at the collector layer.
+
 ### Span Attributes
 
 | Attribute | Description |
 |-----------|-------------|
 | `http.request.body` | Captured request body, truncated to `LAST9_BODY_CAPTURE_MAX_BYTES` |
 | `http.response.body` | Captured response body, truncated to `LAST9_BODY_CAPTURE_MAX_BYTES` |
+| `http.request.header.<key>` | Allowlisted request header values (string slice), `<key>` normalized per OTel semconv |
+| `http.response.header.<key>` | Allowlisted response header values (string slice), `<key>` normalized per OTel semconv |
 
-These attributes are not part of OTel semantic conventions; they follow the convention established by [last9/dotnet-otel-body-capture](https://github.com/last9/dotnet-otel-body-capture).
+The `http.request.body` / `http.response.body` attributes are not part of OTel semantic conventions; they follow the convention established by [last9/dotnet-otel-body-capture](https://github.com/last9/dotnet-otel-body-capture). The `http.{request,response}.header.*` attributes follow OTel HTTP semantic conventions.
 
 ## Code Call-Site Attributes
 
@@ -699,6 +717,8 @@ Attribute keys follow OTel semantic conventions (`semconv` v1.25.0). Stack frame
 | `LAST9_BODY_CAPTURE_MAX_BYTES` | No | Max bytes captured per body (default: `8192`) |
 | `LAST9_BODY_CAPTURE_ON_ERROR_ONLY` | No | Capture only on status >= 400 (default: `false`) |
 | `LAST9_BODY_CAPTURE_CONTENT_TYPES` | No | Content-Type prefixes to capture (default: `application/json,application/xml,text/plain`) |
+| `LAST9_HEADER_CAPTURE_REQUEST` | No | Comma-separated request headers to capture as `http.request.header.*` (default: empty/disabled) |
+| `LAST9_HEADER_CAPTURE_RESPONSE` | No | Comma-separated response headers to capture as `http.response.header.*` (default: empty/disabled) |
 
 The agent automatically detects and records host info, OS, architecture, container ID, and process details as resource attributes. It also stamps `telemetry.distro.name=last9-go-agent` and `telemetry.distro.version` so telemetry from this agent is identifiable on the backend.
 
