@@ -61,6 +61,296 @@ func handlerWithSpan(h http.Handler) http.Handler {
 	})
 }
 
+// spanSliceAttrs returns StringSlice attributes from the single finished span,
+// keyed by name. Fails to find anything if not exactly one span was recorded.
+func spanSliceAttrs(rec *tracetest.SpanRecorder) map[string][]string {
+	spans := rec.Ended()
+	if len(spans) != 1 {
+		return nil
+	}
+	m := make(map[string][]string)
+	for _, a := range spans[0].Attributes() {
+		if a.Value.Type() == attribute.STRINGSLICE {
+			m[string(a.Key)] = a.Value.AsStringSlice()
+		}
+	}
+	return m
+}
+
+func TestNormalizeHeaderKeys(t *testing.T) {
+	const reqPrefix = "http.request.header."
+
+	t.Run("builds full OTel key with SDK normalization (lowercase, - -> _)", func(t *testing.T) {
+		got := normalizeHeaderKeys(reqPrefix, []string{"X-Last9-Client"})
+		if key := got["X-Last9-Client"]; key != "http.request.header.x_last9_client" {
+			t.Errorf("key for X-Last9-Client = %q, want %q", key, "http.request.header.x_last9_client")
+		}
+	})
+
+	t.Run("canonicalizes lookup key regardless of input casing", func(t *testing.T) {
+		got := normalizeHeaderKeys(reqPrefix, []string{"x-LAST9-client"})
+		if key, ok := got["X-Last9-Client"]; !ok || key != "http.request.header.x_last9_client" {
+			t.Errorf("canonical key X-Last9-Client missing or wrong: %q (ok=%v)", key, ok)
+		}
+	})
+
+	t.Run("response prefix", func(t *testing.T) {
+		got := normalizeHeaderKeys("http.response.header.", []string{"X-Request-Id"})
+		if key := got["X-Request-Id"]; key != "http.response.header.x_request_id" {
+			t.Errorf("key = %q, want %q", key, "http.response.header.x_request_id")
+		}
+	})
+
+	t.Run("drops empty names", func(t *testing.T) {
+		got := normalizeHeaderKeys(reqPrefix, []string{"", "  ", "X-Foo"})
+		if len(got) != 1 {
+			t.Errorf("got %d keys, want 1: %v", len(got), got)
+		}
+	})
+
+	t.Run("differently-cased duplicates collapse to one canonical key", func(t *testing.T) {
+		got := normalizeHeaderKeys(reqPrefix, []string{"X-Foo", "x-foo"})
+		if len(got) != 1 {
+			t.Errorf("got %d keys, want 1 (dedup): %v", len(got), got)
+		}
+	})
+
+	t.Run("nil for empty input", func(t *testing.T) {
+		if got := normalizeHeaderKeys(reqPrefix, nil); got != nil {
+			t.Errorf("normalizeHeaderKeys(nil) = %v, want nil", got)
+		}
+	})
+}
+
+// headerCfg returns a config with body capture OFF and the given header allowlists.
+func headerCfg(req, resp []string) *config.Config {
+	return &config.Config{
+		BodyCaptureEnabled:     false,
+		CaptureRequestHeaders:  req,
+		CaptureResponseHeaders: resp,
+	}
+}
+
+func TestMiddleware_CapturesRequestHeaders(t *testing.T) {
+	rec := setupTracer(t)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := handlerWithSpan(newMiddleware(inner, headerCfg([]string{"X-Last9-Client"}, nil)))
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Last9-Client", "mcp")
+	req.Header.Set("X-Other", "ignored")
+	rw := httptest.NewRecorder()
+	mw.ServeHTTP(rw, req)
+
+	attrs := spanSliceAttrs(rec)
+	if got := attrs["http.request.header.x_last9_client"]; len(got) != 1 || got[0] != "mcp" {
+		t.Errorf("http.request.header.x_last9_client = %v, want [mcp]", got)
+	}
+	if _, ok := attrs["http.request.header.x_other"]; ok {
+		t.Error("non-allowlisted header X-Other should not be captured")
+	}
+}
+
+func TestMiddleware_CapturesRequestHeaders_MultiValue(t *testing.T) {
+	rec := setupTracer(t)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+
+	mw := handlerWithSpan(newMiddleware(inner, headerCfg([]string{"X-Forwarded-For"}, nil)))
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Add("X-Forwarded-For", "1.1.1.1")
+	req.Header.Add("X-Forwarded-For", "2.2.2.2")
+	rw := httptest.NewRecorder()
+	mw.ServeHTTP(rw, req)
+
+	attrs := spanSliceAttrs(rec)
+	want := []string{"1.1.1.1", "2.2.2.2"}
+	if got := attrs["http.request.header.x_forwarded_for"]; len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("http.request.header.x_forwarded_for = %v, want %v", got, want)
+	}
+}
+
+func TestMiddleware_HeaderCapture_BodyDisabled(t *testing.T) {
+	rec := setupTracer(t)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok")) //nolint:errcheck
+	})
+
+	// Body capture is OFF; the middleware must still activate for header capture.
+	cfg := headerCfg([]string{"X-Last9-Client"}, nil)
+	mw := handlerWithSpan(newMiddleware(inner, cfg))
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Last9-Client", "mcp")
+	rw := httptest.NewRecorder()
+	mw.ServeHTTP(rw, req)
+
+	attrs := spanSliceAttrs(rec)
+	if got := attrs["http.request.header.x_last9_client"]; len(got) != 1 || got[0] != "mcp" {
+		t.Errorf("header should be captured with BodyCaptureEnabled=false; got %v", got)
+	}
+}
+
+func TestMiddleware_HeaderCapture_NotGatedByOnErrorOnly(t *testing.T) {
+	rec := setupTracer(t)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body) //nolint:errcheck
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"ok":true}`)) //nolint:errcheck
+	})
+
+	// Body capture on + onErrorOnly: body must be skipped on 200, headers must not.
+	cfg := defaultCfg()
+	cfg.BodyCaptureOnErrorOnly = true
+	cfg.CaptureRequestHeaders = []string{"X-Last9-Client"}
+	mw := handlerWithSpan(newMiddleware(inner, cfg))
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"x":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Last9-Client", "mcp")
+	rw := httptest.NewRecorder()
+	mw.ServeHTTP(rw, req)
+
+	if got := spanSliceAttrs(rec)["http.request.header.x_last9_client"]; len(got) != 1 || got[0] != "mcp" {
+		t.Errorf("header should be captured on 200 despite onErrorOnly; got %v", got)
+	}
+	if _, ok := spanAttrs(rec)["http.request.body"]; ok {
+		t.Error("body should NOT be captured on 200 when onErrorOnly=true")
+	}
+}
+
+func TestMiddleware_CapturesResponseHeaders(t *testing.T) {
+	rec := setupTracer(t)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "abc123")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok")) //nolint:errcheck
+	})
+
+	mw := handlerWithSpan(newMiddleware(inner, headerCfg(nil, []string{"X-Request-Id"})))
+	req := httptest.NewRequest("GET", "/", nil)
+	rw := httptest.NewRecorder()
+	mw.ServeHTTP(rw, req)
+
+	if got := spanSliceAttrs(rec)["http.response.header.x_request_id"]; len(got) != 1 || got[0] != "abc123" {
+		t.Errorf("http.response.header.x_request_id = %v, want [abc123]", got)
+	}
+}
+
+// Handler sets a response header and calls Write WITHOUT an explicit WriteHeader
+// (implicit 200). The header must still be captured.
+func TestMiddleware_CapturesResponseHeaders_ImplicitWriteHeader(t *testing.T) {
+	rec := setupTracer(t)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "implicit")
+		w.Write([]byte("ok")) //nolint:errcheck — no explicit WriteHeader
+	})
+
+	mw := handlerWithSpan(newMiddleware(inner, headerCfg(nil, []string{"X-Request-Id"})))
+	rw := httptest.NewRecorder()
+	mw.ServeHTTP(rw, httptest.NewRequest("GET", "/", nil))
+
+	if got := spanSliceAttrs(rec)["http.response.header.x_request_id"]; len(got) != 1 || got[0] != "implicit" {
+		t.Errorf("http.response.header.x_request_id = %v, want [implicit]", got)
+	}
+}
+
+// Handler sets a response header but returns without ever calling Write or
+// WriteHeader. net/http sends an implicit 200 with that header on the wire; the
+// post-ServeHTTP fallback must still capture it.
+func TestMiddleware_CapturesResponseHeaders_NoWrite(t *testing.T) {
+	rec := setupTracer(t)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "nowrite")
+	})
+
+	mw := handlerWithSpan(newMiddleware(inner, headerCfg(nil, []string{"X-Request-Id"})))
+	rw := httptest.NewRecorder()
+	mw.ServeHTTP(rw, httptest.NewRequest("GET", "/", nil))
+
+	if got := spanSliceAttrs(rec)["http.response.header.x_request_id"]; len(got) != 1 || got[0] != "nowrite" {
+		t.Errorf("http.response.header.x_request_id = %v, want [nowrite]", got)
+	}
+}
+
+// A response header not in the allowlist must not be captured.
+func TestMiddleware_ResponseHeader_NotAllowlisted(t *testing.T) {
+	rec := setupTracer(t)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Secret", "leak")
+		w.Header().Set("X-Request-Id", "abc")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := handlerWithSpan(newMiddleware(inner, headerCfg(nil, []string{"X-Request-Id"})))
+	rw := httptest.NewRecorder()
+	mw.ServeHTTP(rw, httptest.NewRequest("GET", "/", nil))
+
+	if _, ok := spanSliceAttrs(rec)["http.response.header.x_secret"]; ok {
+		t.Error("non-allowlisted response header X-Secret should not be captured")
+	}
+}
+
+// Response-header capture must not be gated by onErrorOnly — a 200 with body
+// capture in onErrorOnly mode must still record the allowlisted response header.
+func TestMiddleware_ResponseHeader_NotGatedByOnErrorOnly(t *testing.T) {
+	rec := setupTracer(t)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Id", "abc")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok")) //nolint:errcheck
+	})
+
+	cfg := defaultCfg()
+	cfg.BodyCaptureOnErrorOnly = true
+	cfg.CaptureResponseHeaders = []string{"X-Request-Id"}
+	mw := handlerWithSpan(newMiddleware(inner, cfg))
+	rw := httptest.NewRecorder()
+	mw.ServeHTTP(rw, httptest.NewRequest("GET", "/", nil))
+
+	if got := spanSliceAttrs(rec)["http.response.header.x_request_id"]; len(got) != 1 || got[0] != "abc" {
+		t.Errorf("response header should be captured on 200 despite onErrorOnly; got %v", got)
+	}
+}
+
+func TestMiddleware_BodyAndHeaderTogether(t *testing.T) {
+	rec := setupTracer(t)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body) //nolint:errcheck
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok":true}`)) //nolint:errcheck
+	})
+
+	cfg := defaultCfg()
+	cfg.CaptureRequestHeaders = []string{"X-Last9-Client"}
+	mw := handlerWithSpan(newMiddleware(inner, cfg))
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"x":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Last9-Client", "mcp")
+	rw := httptest.NewRecorder()
+	mw.ServeHTTP(rw, req)
+
+	if got := spanSliceAttrs(rec)["http.request.header.x_last9_client"]; len(got) != 1 || got[0] != "mcp" {
+		t.Errorf("header attr missing; got %v", got)
+	}
+	if got := spanAttrs(rec)["http.request.body"]; got != `{"x":1}` {
+		t.Errorf("http.request.body = %q, want %q", got, `{"x":1}`)
+	}
+	if got := spanAttrs(rec)["http.response.body"]; got != `{"ok":true}` {
+		t.Errorf("http.response.body = %q, want %q", got, `{"ok":true}`)
+	}
+}
+
 func TestIsAllowedContentType(t *testing.T) {
 	tests := []struct {
 		name        string

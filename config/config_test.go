@@ -314,4 +314,38 @@ func TestLoad_BodyCapture_EnvVars(t *testing.T) {
 	}
 }
 
+func TestLoad_CaptureHeaders_Defaults(t *testing.T) {
+	os.Unsetenv("LAST9_HEADER_CAPTURE_REQUEST")
+	os.Unsetenv("LAST9_HEADER_CAPTURE_RESPONSE")
+
+	cfg := Load()
+
+	if len(cfg.CaptureRequestHeaders) != 0 {
+		t.Errorf("CaptureRequestHeaders = %v, want empty", cfg.CaptureRequestHeaders)
+	}
+	if len(cfg.CaptureResponseHeaders) != 0 {
+		t.Errorf("CaptureResponseHeaders = %v, want empty", cfg.CaptureResponseHeaders)
+	}
+}
+
+func TestLoad_CaptureHeaders_EnvVars(t *testing.T) {
+	os.Setenv("LAST9_HEADER_CAPTURE_REQUEST", "X-Last9-Client, X-Last9-MCP-Version")
+	os.Setenv("LAST9_HEADER_CAPTURE_RESPONSE", "X-Request-Id")
+	defer func() {
+		os.Unsetenv("LAST9_HEADER_CAPTURE_REQUEST")
+		os.Unsetenv("LAST9_HEADER_CAPTURE_RESPONSE")
+	}()
+
+	cfg := Load()
+
+	wantReq := []string{"X-Last9-Client", "X-Last9-MCP-Version"}
+	if !reflect.DeepEqual(cfg.CaptureRequestHeaders, wantReq) {
+		t.Errorf("CaptureRequestHeaders = %v, want %v", cfg.CaptureRequestHeaders, wantReq)
+	}
+	wantResp := []string{"X-Request-Id"}
+	if !reflect.DeepEqual(cfg.CaptureResponseHeaders, wantResp) {
+		t.Errorf("CaptureResponseHeaders = %v, want %v", cfg.CaptureResponseHeaders, wantResp)
+	}
+}
+
 func strPtr(s string) *string { return &s }

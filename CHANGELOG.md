@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-17
+
+### Added
+- **HTTP header capture** — `instrumentation/httpcapture` can now record allowlisted request and response headers onto the active span as `http.request.header.<key>` / `http.response.header.<key>` (string-slice values, key normalized exactly as the OpenTelemetry Go SDK does — lowercased with `-` replaced by `_`, e.g. `X-Last9-Client` → `http.request.header.x_last9_client`, identical to `otelhttp`). Configure via `LAST9_HEADER_CAPTURE_REQUEST` and `LAST9_HEADER_CAPTURE_RESPONSE` (comma-separated allowlists). Header capture is independent of body capture: it activates when either allowlist is set even with `LAST9_BODY_CAPTURE_ENABLED=false`, and is not gated by `LAST9_BODY_CAPTURE_ON_ERROR_ONLY`. Response headers are snapshotted at `WriteHeader` time.
+
 ## [0.4.1] - 2026-06-10
 
 ### Added
@@ -88,7 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `testutil` package: mock OTLP collector, span assertions, context helpers.
 - Docker Compose setup for integration tests (Postgres, MySQL, Redis, Kafka).
 
-[Unreleased]: https://github.com/last9/go-agent/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/last9/go-agent/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/last9/go-agent/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/last9/go-agent/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/last9/go-agent/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/last9/go-agent/compare/v0.3.0...v0.3.1
