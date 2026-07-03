@@ -26,9 +26,10 @@ func operationTypeAttribute(oc *graphql.OperationContext) attribute.KeyValue {
 }
 
 // isSubscription reports whether the operation context describes a GraphQL
-// subscription. Subscriptions are not instrumented in v1 (R4): gqlgen invokes
+// subscription. Subscriptions are not instrumented: gqlgen invokes
 // ResponseInterceptor once per streamed message for a subscription's
-// lifetime, not once per operation.
+// lifetime, not once per operation, so spanning them would create one span
+// per message rather than one span per operation.
 func isSubscription(oc *graphql.OperationContext) bool {
 	return oc != nil && oc.Operation != nil && oc.Operation.Operation == ast.Subscription
 }
@@ -66,7 +67,7 @@ func baseAttributes(oc *graphql.OperationContext, includeQueryDocument bool) []a
 		attrs = append(attrs, semconv.GraphqlOperationName(name))
 	}
 	if includeQueryDocument && oc != nil {
-		attrs = append(attrs, semconv.GraphqlDocument(oc.RawQuery))
+		attrs = append(attrs, semconv.GraphqlDocument(truncate(oc.RawQuery)))
 	}
 	return attrs
 }

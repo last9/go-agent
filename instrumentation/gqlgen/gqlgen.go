@@ -20,12 +20,29 @@ const (
 	// go.opentelemetry.io/otel/semconv/v1.25.0 (error.type was standardized
 	// in a later semconv revision, and graphql.error.count is not an OTel
 	// semantic convention at all). Declared locally, matching the shape
-	// last9/browser#184's mobile SDK already ships.
+	// Last9's mobile RUM SDK already ships for GraphQL errors, so backend and
+	// mobile traces carry the same attribute shape.
 	errorTypeKey         = attribute.Key("error.type")
 	graphqlErrorCountKey = attribute.Key("graphql.error.count")
 
 	graphQLErrorType = "GraphQLError"
+
+	// maxCapturedTextLen bounds graphql.document and the raw GraphQL error
+	// text (both only captured when IncludeQueryDocument is true) so a large
+	// introspection query or an operation with many field-level errors can't
+	// grow a single span large enough to push an OTLP batch export over the
+	// collector's message-size limit and drop telemetry for unrelated
+	// requests sharing that batch.
+	maxCapturedTextLen = 8 * 1024
 )
+
+// truncate caps s to maxCapturedTextLen, appending a marker when truncated.
+func truncate(s string) string {
+	if len(s) <= maxCapturedTextLen {
+		return s
+	}
+	return s[:maxCapturedTextLen] + "...(truncated)"
+}
 
 // Config configures the gqlgen instrumentation.
 type Config struct {
@@ -37,11 +54,23 @@ type Config struct {
 
 // Tracer implements graphql.HandlerExtension and graphql.ResponseInterceptor,
 // creating one INTERNAL span per GraphQL operation. Field-level resolver
-// spans and GraphQL subscriptions are not instrumented (see R4 in the
-// originating plan).
+// spans and GraphQL subscriptions are not instrumented.
+//
+// The zero value Tracer{} is valid: InterceptResponse falls back to the
+// globally registered OTel tracer provider when tracer is nil, so
+// constructing a Tracer directly (bypassing New/Use) cannot panic.
 type Tracer struct {
 	cfg    Config
 	tracer oteltrace.Tracer
+}
+
+// resolveTracer returns t.tracer, or resolves it from the current global
+// tracer provider when t was constructed as a zero value.
+func (t Tracer) resolveTracer() oteltrace.Tracer {
+	if t.tracer != nil {
+		return t.tracer
+	}
+	return otel.Tracer(tracerName)
 }
 
 var (
@@ -100,7 +129,7 @@ func (t Tracer) InterceptResponse(ctx context.Context, next graphql.ResponseHand
 		return next(ctx)
 	}
 
-	ctx, span := t.tracer.Start(ctx, spanName(oc), oteltrace.WithSpanKind(oteltrace.SpanKindInternal))
+	ctx, span := t.resolveTracer().Start(ctx, spanName(oc), oteltrace.WithSpanKind(oteltrace.SpanKindInternal))
 	defer span.End()
 	span.SetAttributes(baseAttributes(oc, t.cfg.IncludeQueryDocument)...)
 
@@ -109,7 +138,7 @@ func (t Tracer) InterceptResponse(ctx context.Context, next graphql.ResponseHand
 	if resp != nil && len(resp.Errors) > 0 {
 		errDesc := "graphql response errors"
 		if t.cfg.IncludeQueryDocument {
-			errDesc = resp.Errors.Error()
+			errDesc = truncate(resp.Errors.Error())
 		}
 		span.SetStatus(codes.Error, errDesc)
 		span.SetAttributes(

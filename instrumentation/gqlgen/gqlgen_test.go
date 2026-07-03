@@ -4,8 +4,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/99designs/gqlgen/client"
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
+	"github.com/99designs/gqlgen/graphql/handler/testserver"
+	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vektah/gqlparser/v2/ast"
@@ -205,4 +208,53 @@ func TestUse_BeforeAgentStart_DoesNotPanic(t *testing.T) {
 	assert.NotPanics(t, func() {
 		gqlgen.Use(srv, gqlgen.Config{})
 	})
+}
+
+// TestUse_EndToEnd wires the tracer into a real gqlgen server via Use and
+// drives an actual request through gqlgen's own response-interceptor chain
+// (gqlgen's handler/testserver + client packages), confirming the extension
+// is genuinely invoked at request time — not just that construction doesn't
+// panic.
+func TestUse_EndToEnd(t *testing.T) {
+	collector := testutil.NewMockCollector()
+	defer collector.Shutdown(context.Background())
+
+	srv := testserver.New()
+	srv.AddTransport(transport.POST{})
+	gqlgen.Use(srv.Server, gqlgen.Config{})
+	c := client.New(srv)
+
+	var resp struct {
+		Name string
+	}
+	c.MustPost(`query GetName { name }`, &resp)
+
+	spans := collector.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "query GetName", spans[0].Name())
+	testutil.AssertSpanAttribute(t, spans[0], "graphql.operation.type", "query")
+	testutil.AssertSpanAttribute(t, spans[0], "graphql.operation.name", "GetName")
+}
+
+// TestUse_EndToEnd_ErrorPath drives a real request that produces a GraphQL
+// error (testserver's Mutation always errors) through the wired extension.
+func TestUse_EndToEnd_ErrorPath(t *testing.T) {
+	collector := testutil.NewMockCollector()
+	defer collector.Shutdown(context.Background())
+
+	srv := testserver.New()
+	srv.AddTransport(transport.POST{})
+	gqlgen.Use(srv.Server, gqlgen.Config{})
+	c := client.New(srv)
+
+	var resp struct {
+		Name string
+	}
+	err := c.Post(`mutation { name }`, &resp)
+	require.Error(t, err)
+
+	spans := collector.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, codes.Error.String(), spans[0].Status().Code.String())
+	testutil.AssertSpanAttributeInt(t, spans[0], "graphql.error.count", 1)
 }

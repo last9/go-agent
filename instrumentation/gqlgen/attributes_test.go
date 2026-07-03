@@ -1,6 +1,7 @@
 package gqlgen
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -69,6 +70,9 @@ func TestIsSubscription(t *testing.T) {
 	if isSubscription(nil) {
 		t.Error("expected nil operation context to report false, not panic")
 	}
+	if isSubscription(&graphql.OperationContext{}) {
+		t.Error("expected operation context with nil Operation field to report false, not panic")
+	}
 }
 
 func TestBaseAttributes_Redaction(t *testing.T) {
@@ -96,6 +100,27 @@ func TestBaseAttributes_Redaction(t *testing.T) {
 		}
 		if !found {
 			t.Fatal("expected graphql.document to be present when IncludeQueryDocument is true")
+		}
+	})
+
+	t.Run("nil operation context with IncludeQueryDocument=true does not panic", func(t *testing.T) {
+		attrs := baseAttributes(nil, true)
+		for _, a := range attrs {
+			if string(a.Key) == "graphql.document" {
+				t.Fatal("expected no graphql.document attribute for a nil operation context")
+			}
+		}
+	})
+
+	t.Run("oversized query document is truncated", func(t *testing.T) {
+		big := opContext(ast.Query, "GetUser", strings.Repeat("a", maxCapturedTextLen+100))
+		attrs := baseAttributes(big, true)
+		for _, a := range attrs {
+			if string(a.Key) == "graphql.document" {
+				if len(a.Value.AsString()) > maxCapturedTextLen+len("...(truncated)") {
+					t.Errorf("graphql.document not truncated, len=%d", len(a.Value.AsString()))
+				}
+			}
 		}
 	})
 
