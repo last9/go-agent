@@ -19,6 +19,7 @@ This is the SDK path: works anywhere Go runs — VMs, bare metal, Lambda, local 
 - [Quick Start](#quick-start)
 - [Framework Support](#framework-support)
 - [Database Support](#database-support)
+- [GraphQL Support](#graphql-support)
 - [ORM Support (GORM)](#orm-support-gorm)
 - [MongoDB](#mongodb)
 - [Redis](#redis)
@@ -271,6 +272,32 @@ func (r *UserRepo) FindByID(ctx context.Context, id int) (*User, error) {
 
     // ... run query
 }
+```
+
+## GraphQL Support
+
+<p>
+The <code>gqlgen</code> package instruments <a href="https://github.com/99designs/gqlgen"><code>99designs/gqlgen</code></a> servers. Every GraphQL operation (query or mutation) gets one span, named after the operation (e.g. <code>query GetUser</code>) and carrying OTel semantic convention attributes (<code>graphql.operation.name</code>, <code>graphql.operation.type</code>). GraphQL-level errors — responses with a populated <code>errors</code> array, which gqlgen returns with HTTP 200 — mark the span as errored and set <code>graphql.error.count</code> and <code>error.type</code>. Field-level resolver spans and GraphQL subscriptions are not instrumented.
+</p>
+
+```go
+import (
+    "github.com/99designs/gqlgen/graphql/handler"
+    gqlgenagent "github.com/last9/go-agent/instrumentation/gqlgen"
+)
+
+srv := handler.NewDefaultServer(schema)
+gqlgenagent.Use(srv, gqlgenagent.Config{})
+```
+
+<p>
+<code>Config.IncludeQueryDocument</code> is opt-in and disabled by default. When <code>true</code>, it includes both the raw GraphQL query document text (<code>graphql.document</code>) <em>and</em> raw GraphQL error message text on the span — GraphQL resolver and validation errors routinely echo back the input that caused them (emails, IDs, other user-supplied values), so both are gated behind the same flag. Disable in production environments that handle PII or sensitive data. <code>graphql.operation.name</code>/<code>type</code> and the always-on <code>graphql.error.count</code>/<code>error.type</code> attributes are unaffected by this flag — they carry no query content.
+</p>
+
+```go
+gqlgenagent.Use(srv, gqlgenagent.Config{
+    IncludeQueryDocument: true, // include raw query text and error messages — non-production only
+})
 ```
 
 ## ORM Support (GORM)
