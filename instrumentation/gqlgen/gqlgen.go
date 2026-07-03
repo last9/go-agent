@@ -1,0 +1,133 @@
+package gqlgen
+
+import (
+	"context"
+
+	"github.com/99designs/gqlgen/graphql"
+	"github.com/99designs/gqlgen/graphql/handler"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	oteltrace "go.opentelemetry.io/otel/trace"
+
+	"github.com/last9/go-agent"
+)
+
+const (
+	tracerName = "github.com/last9/go-agent/instrumentation/gqlgen"
+
+	// errorTypeKey and graphqlErrorCountKey are not covered by
+	// go.opentelemetry.io/otel/semconv/v1.25.0 (error.type was standardized
+	// in a later semconv revision, and graphql.error.count is not an OTel
+	// semantic convention at all). Declared locally, matching the shape
+	// last9/browser#184's mobile SDK already ships.
+	errorTypeKey         = attribute.Key("error.type")
+	graphqlErrorCountKey = attribute.Key("graphql.error.count")
+
+	graphQLErrorType = "GraphQLError"
+)
+
+// Config configures the gqlgen instrumentation.
+type Config struct {
+	// IncludeQueryDocument, when true, includes the raw GraphQL query
+	// document text and raw GraphQL error messages in spans.
+	// Disable in production environments that handle PII or sensitive data.
+	IncludeQueryDocument bool
+}
+
+// Tracer implements graphql.HandlerExtension and graphql.ResponseInterceptor,
+// creating one INTERNAL span per GraphQL operation. Field-level resolver
+// spans and GraphQL subscriptions are not instrumented (see R4 in the
+// originating plan).
+type Tracer struct {
+	cfg    Config
+	tracer oteltrace.Tracer
+}
+
+var (
+	_ graphql.HandlerExtension    = Tracer{}
+	_ graphql.ResponseInterceptor = Tracer{}
+)
+
+// New creates a Tracer configured per cfg, using whatever OTel tracer
+// provider is currently registered globally. Most callers should use Use
+// instead; New does not start the agent — it is exposed for composing with
+// other gqlgen extensions, or in tests that configure their own tracer
+// provider (e.g. a MockCollector) and need it to take effect immediately.
+func New(cfg Config) Tracer {
+	return Tracer{
+		cfg:    cfg,
+		tracer: otel.Tracer(tracerName),
+	}
+}
+
+// Use wires Last9 instrumentation into a gqlgen server.
+//
+// IMPORTANT: This does NOT require agent.Start() to have been called first —
+// it starts the agent automatically if needed, matching instrumentation/chi's
+// ensureAgentStarted guarantee.
+//
+// Example:
+//
+//	srv := handler.NewDefaultServer(schema)
+//	gqlgenagent.Use(srv, gqlgen.Config{})
+func Use(srv *handler.Server, cfg Config) {
+	ensureAgentStarted()
+	srv.Use(New(cfg))
+}
+
+// ExtensionName returns the extension's identifier, shown in gqlgen's stats
+// and logging.
+func (t Tracer) ExtensionName() string {
+	return "Last9GraphQL"
+}
+
+// Validate is a no-op; this extension does not depend on schema shape.
+func (t Tracer) Validate(_ graphql.ExecutableSchema) error {
+	return nil
+}
+
+// InterceptResponse creates one INTERNAL span per GraphQL operation. It
+// passes through without creating a span for subscriptions, since gqlgen
+// invokes ResponseInterceptor once per streamed message for a subscription's
+// lifetime, not once per operation (R4).
+func (t Tracer) InterceptResponse(ctx context.Context, next graphql.ResponseHandler) *graphql.Response {
+	if !graphql.HasOperationContext(ctx) {
+		return next(ctx)
+	}
+	oc := graphql.GetOperationContext(ctx)
+	if isSubscription(oc) {
+		return next(ctx)
+	}
+
+	ctx, span := t.tracer.Start(ctx, spanName(oc), oteltrace.WithSpanKind(oteltrace.SpanKindInternal))
+	defer span.End()
+	span.SetAttributes(baseAttributes(oc, t.cfg.IncludeQueryDocument)...)
+
+	resp := next(ctx)
+
+	if resp != nil && len(resp.Errors) > 0 {
+		errDesc := "graphql response errors"
+		if t.cfg.IncludeQueryDocument {
+			errDesc = resp.Errors.Error()
+		}
+		span.SetStatus(codes.Error, errDesc)
+		span.SetAttributes(
+			graphqlErrorCountKey.Int(len(resp.Errors)),
+			errorTypeKey.String(graphQLErrorType),
+		)
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
+
+	return resp
+}
+
+// ensureAgentStarted starts the agent if not already initialized, mirroring
+// instrumentation/chi's guarantee that this package works even if the user
+// forgot to call agent.Start() first.
+func ensureAgentStarted() {
+	if !agent.IsInitialized() {
+		_ = agent.Start()
+	}
+}
