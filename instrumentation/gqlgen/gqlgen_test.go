@@ -2,6 +2,7 @@ package gqlgen_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/99designs/gqlgen/client"
@@ -13,7 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/last9/go-agent/instrumentation/gqlgen"
 	"github.com/last9/go-agent/tests/testutil"
@@ -182,6 +185,84 @@ func TestInterceptResponse_Subscription_NoSpanAcrossMultipleMessages(t *testing.
 
 	assert.Equal(t, 3, callCount)
 	testutil.AssertSpanCount(t, collector.GetSpans(), 0)
+}
+
+func TestInterceptResponse_ErrorText_Truncated(t *testing.T) {
+	collector := testutil.NewMockCollector()
+	defer collector.Shutdown(context.Background())
+
+	tracer := gqlgen.New(gqlgen.Config{IncludeQueryDocument: true})
+	ctx := withOperationContext(operationContext(ast.Query, "GetUser", ""))
+
+	bigMessage := strings.Repeat("e", 9000)
+	next := func(context.Context) *graphql.Response {
+		return &graphql.Response{Errors: gqlerror.List{{Message: bigMessage}}}
+	}
+
+	tracer.InterceptResponse(ctx, next)
+
+	spans := collector.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Less(t, len(spans[0].Status().Description), len(bigMessage), "error status description should be truncated")
+}
+
+// TestInterceptResponse_NestsUnderParentSpan verifies the GraphQL operation
+// span nests under whatever SERVER span is already active in context — the
+// same relationship an HTTP framework instrumentation (chi, gin, etc.) would
+// establish before gqlgen's handler runs. R1 requires this nesting.
+func TestInterceptResponse_NestsUnderParentSpan(t *testing.T) {
+	collector := testutil.NewMockCollector()
+	defer collector.Shutdown(context.Background())
+
+	parentCtx, parentSpan := otel.Tracer("test-http-framework").Start(context.Background(), "/graphql")
+
+	tracer := gqlgen.New(gqlgen.Config{})
+	ctx := withOperationContext(operationContext(ast.Query, "GetUser", ""))
+	ctx = graphql.WithOperationContext(parentCtx, graphql.GetOperationContext(ctx))
+
+	next := func(context.Context) *graphql.Response {
+		return &graphql.Response{Data: []byte(`{}`)}
+	}
+	tracer.InterceptResponse(ctx, next)
+	parentSpan.End()
+
+	spans := collector.GetSpans()
+	require.Len(t, spans, 2)
+
+	var parent, child sdktrace.ReadOnlySpan
+	for _, s := range spans {
+		if s.Name() == "/graphql" {
+			parent = s
+		} else {
+			child = s
+		}
+	}
+	require.NotNil(t, parent)
+	require.NotNil(t, child)
+	testutil.AssertParentChild(t, parent, child)
+}
+
+// TestTracer_ZeroValue_ResolvesTracerFromGlobalProvider verifies a
+// directly-constructed Tracer{} (bypassing New/Use) does not panic and
+// still produces a span, via resolveTracer's nil fallback.
+func TestTracer_ZeroValue_ResolvesTracerFromGlobalProvider(t *testing.T) {
+	collector := testutil.NewMockCollector()
+	defer collector.Shutdown(context.Background())
+
+	var tracer gqlgen.Tracer
+	ctx := withOperationContext(operationContext(ast.Query, "GetUser", ""))
+
+	next := func(context.Context) *graphql.Response {
+		return &graphql.Response{Data: []byte(`{}`)}
+	}
+
+	assert.NotPanics(t, func() {
+		tracer.InterceptResponse(ctx, next)
+	})
+
+	spans := collector.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "query GetUser", spans[0].Name())
 }
 
 func TestTracer_SatisfiesHandlerExtension(t *testing.T) {

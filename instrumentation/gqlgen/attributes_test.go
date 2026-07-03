@@ -142,4 +142,26 @@ func TestBaseAttributes_Redaction(t *testing.T) {
 			t.Error("expected graphql.operation.type=query")
 		}
 	})
+
+	t.Run("anonymous operation omits graphql.operation.name", func(t *testing.T) {
+		anon := opContext(ast.Query, "", "{ user { id } }")
+		attrs := baseAttributes(anon, false)
+		for _, a := range attrs {
+			if string(a.Key) == "graphql.operation.name" {
+				t.Fatal("expected graphql.operation.name to be absent for an anonymous operation")
+			}
+		}
+	})
+
+	t.Run("oversized operation name is truncated", func(t *testing.T) {
+		big := opContext(ast.Query, strings.Repeat("n", maxCapturedTextLen+100), "")
+		attrs := baseAttributes(big, false)
+		for _, a := range attrs {
+			if string(a.Key) == "graphql.operation.name" {
+				if len(a.Value.AsString()) > maxCapturedTextLen+len("...(truncated)") {
+					t.Errorf("graphql.operation.name not truncated, len=%d", len(a.Value.AsString()))
+				}
+			}
+		}
+	})
 }

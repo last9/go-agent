@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`instrumentation/gqlgen`** — operation-level OTel instrumentation for `99designs/gqlgen` GraphQL servers. One INTERNAL span per query/mutation with `graphql.operation.name`/`graphql.operation.type` attributes; raw query document text and raw GraphQL error messages are opt-in via `Config.IncludeQueryDocument` (default `false`). GraphQL-level errors (HTTP 200 with a populated `errors` array) set span status `Error` plus `graphql.error.count`/`error.type`. Field-level resolver spans and subscriptions are not instrumented.
+
 ## [0.4.1] - 2026-06-10
 
 ### Added

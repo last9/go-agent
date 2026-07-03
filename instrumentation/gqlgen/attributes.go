@@ -35,12 +35,15 @@ func isSubscription(oc *graphql.OperationContext) bool {
 }
 
 // operationName returns the GraphQL operation name, or "" when the operation
-// is anonymous/unnamed.
+// is anonymous/unnamed. The name is client-supplied and always-on (unlike
+// graphql.document), so it is truncated the same way to prevent an
+// oversized operation name from growing every span regardless of
+// IncludeQueryDocument.
 func operationName(oc *graphql.OperationContext) string {
 	if oc == nil || oc.Operation == nil {
 		return ""
 	}
-	return oc.Operation.Name
+	return truncate(oc.Operation.Name)
 }
 
 // spanName builds the INTERNAL span name as "{operationType} {operationName}"

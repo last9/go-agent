@@ -2,6 +2,7 @@ package gqlgen
 
 import (
 	"context"
+	"unicode/utf8"
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
@@ -37,11 +38,18 @@ const (
 )
 
 // truncate caps s to maxCapturedTextLen, appending a marker when truncated.
+// The cut point backs up to the nearest rune boundary so a multi-byte UTF-8
+// character at the cutoff is never split, which would otherwise emit an
+// invalid-UTF-8 tail into the span attribute or status description.
 func truncate(s string) string {
 	if len(s) <= maxCapturedTextLen {
 		return s
 	}
-	return s[:maxCapturedTextLen] + "...(truncated)"
+	cut := maxCapturedTextLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "...(truncated)"
 }
 
 // Config configures the gqlgen instrumentation.
