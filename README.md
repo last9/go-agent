@@ -539,7 +539,7 @@ Use standard UCUM units: `ms`/`s` for time, `By` for bytes, `{item}`/`{request}`
 
 | Source | Metrics |
 |--------|---------|
-| **Runtime** | heap alloc, goroutines, GC count, GC pause — Go 1.24+ gets the full OTel runtime suite (15+ metrics) |
+| **Runtime** | the full OTel runtime suite (15+ metrics): heap alloc, goroutines, GC count, GC pause, and more |
 | **HTTP/gRPC** | request duration, request/response size, active requests, RPC latency |
 | **Database** | connection pool usage, idle, max, wait/use/idle times |
 | **MongoDB** | operation count, error count, operation duration |
@@ -704,9 +704,9 @@ The agent automatically detects and records host info, OS, architecture, contain
 
 ## Requirements
 
-- Go 1.22 or later (1.24+ recommended — full OTel runtime instrumentation)
-- OpenTelemetry Tracing/Metrics API 1.39.0
-- Semantic Conventions v1.26.0
+- Go 1.24 or later (required by OpenTelemetry Go 1.41+)
+- OpenTelemetry Tracing/Metrics API 1.41.0
+- Semantic Conventions v1.25.0
 
 ## Testing
 
