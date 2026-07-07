@@ -284,6 +284,10 @@ The <code>gqlgen</code> package instruments <a href="https://github.com/99design
 Wire this alongside your HTTP framework instrumentation so the GraphQL span nests under the SERVER span for the <code>/graphql</code> request. The gqlgen extension does not replace HTTP middleware — it adds operation-level detail inside an already-traced request.
 </p>
 
+<p>
+If you configure the agent using <code>agent.Start(...)</code> functional options, call <code>agent.Start(...)</code> before <code>gqlgenagent.Use(...)</code>. <code>Use</code> will auto-start the agent (using env-defaults) if it’s not initialized yet, and subsequent <code>agent.Start(opts...)</code> calls won’t take effect.
+</p>
+
 ```go
 import (
     "github.com/go-chi/chi/v5"
