@@ -277,17 +277,26 @@ func (r *UserRepo) FindByID(ctx context.Context, id int) (*User, error) {
 ## GraphQL Support
 
 <p>
-The <code>gqlgen</code> package instruments <a href="https://github.com/99designs/gqlgen"><code>99designs/gqlgen</code></a> servers. Every GraphQL operation (query or mutation) gets one span, named after the operation (e.g. <code>query GetUser</code>) and carrying OTel semantic convention attributes (<code>graphql.operation.name</code>, <code>graphql.operation.type</code>). GraphQL-level errors — responses with a populated <code>errors</code> array, which gqlgen returns with HTTP 200 — mark the span as errored and set <code>graphql.error.count</code> and <code>error.type</code>. Field-level resolver spans and GraphQL subscriptions are not instrumented.
+The <code>gqlgen</code> package instruments <a href="https://github.com/99designs/gqlgen"><code>99designs/gqlgen</code></a> servers. Every GraphQL operation (query or mutation) gets one INTERNAL span, named after the operation (e.g. <code>query GetUser</code>) and carrying OTel semantic convention attributes (<code>graphql.operation.name</code>, <code>graphql.operation.type</code>). GraphQL-level errors — responses with a populated <code>errors</code> array, which gqlgen returns with HTTP 200 — mark the span as errored and set <code>graphql.error.count</code> and <code>error.type</code>. Field-level resolver spans and GraphQL subscriptions are not instrumented.
+</p>
+
+<p>
+Wire this alongside your HTTP framework instrumentation so the GraphQL span nests under the SERVER span for the <code>/graphql</code> request. The gqlgen extension does not replace HTTP middleware — it adds operation-level detail inside an already-traced request.
 </p>
 
 ```go
 import (
+    "github.com/go-chi/chi/v5"
     "github.com/99designs/gqlgen/graphql/handler"
+    chiagent "github.com/last9/go-agent/instrumentation/chi"
     gqlgenagent "github.com/last9/go-agent/instrumentation/gqlgen"
 )
 
+r := chi.NewRouter()
 srv := handler.NewDefaultServer(schema)
 gqlgenagent.Use(srv, gqlgenagent.Config{})
+r.Handle("/graphql", srv)
+http.ListenAndServe(":8080", chiagent.Use(r))
 ```
 
 <p>

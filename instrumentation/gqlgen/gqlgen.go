@@ -68,8 +68,8 @@ type Config struct {
 // globally registered OTel tracer provider when tracer is nil, so
 // constructing a Tracer directly (bypassing New/Use) cannot panic.
 type Tracer struct {
-	cfg    Config
 	tracer oteltrace.Tracer
+	cfg    Config
 }
 
 // resolveTracer returns t.tracer, or resolves it from the current global

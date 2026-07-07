@@ -54,7 +54,7 @@ func spanName(oc *graphql.OperationContext) string {
 	if name == "" {
 		return "GraphQL Operation"
 	}
-	return string(operationTypeAttribute(oc).Value.AsString()) + " " + name
+	return operationTypeAttribute(oc).Value.AsString() + " " + name
 }
 
 // baseAttributes builds the always-on span attributes (operation name and
