@@ -58,6 +58,18 @@ type Config struct {
 	// document text and raw GraphQL error messages in spans.
 	// Disable in production environments that handle PII or sensitive data.
 	IncludeQueryDocument bool
+
+	// IncludeOperationInServerSpanName, when true, renames the active parent
+	// span (typically the HTTP SERVER span created by your web framework
+	// middleware) to the GraphQL operation name (e.g. "query GetUser").
+	//
+	// This produces a New Relic-style "transaction name = GraphQL operation"
+	// experience, but it can increase span-name cardinality. Prefer leaving
+	// this false and grouping by graphql.operation.name/type on the child span
+	// unless you explicitly want operation-level naming at the request level.
+	//
+	// This option never includes raw query document text.
+	IncludeOperationInServerSpanName bool
 }
 
 // Tracer implements graphql.HandlerExtension and graphql.ResponseInterceptor,
@@ -135,6 +147,14 @@ func (t Tracer) InterceptResponse(ctx context.Context, next graphql.ResponseHand
 	oc := graphql.GetOperationContext(ctx)
 	if isSubscription(oc) {
 		return next(ctx)
+	}
+
+	parentSpan := oteltrace.SpanFromContext(ctx)
+	if t.cfg.IncludeOperationInServerSpanName && parentSpan.IsRecording() {
+		// Only stamp the low-risk operation name/type; never attach graphql.document
+		// to the parent request span.
+		parentSpan.SetAttributes(baseAttributes(oc, false)...)
+		parentSpan.SetName(spanName(oc))
 	}
 
 	ctx, span := t.resolveTracer().Start(ctx, spanName(oc), oteltrace.WithSpanKind(oteltrace.SpanKindInternal))

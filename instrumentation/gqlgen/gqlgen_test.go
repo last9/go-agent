@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/last9/go-agent/instrumentation/gqlgen"
 	"github.com/last9/go-agent/tests/testutil"
@@ -240,6 +241,40 @@ func TestInterceptResponse_NestsUnderParentSpan(t *testing.T) {
 	require.NotNil(t, parent)
 	require.NotNil(t, child)
 	testutil.AssertParentChild(t, parent, child)
+}
+
+func TestInterceptResponse_RenamesParentSpan_WhenEnabled(t *testing.T) {
+	collector := testutil.NewMockCollector()
+	defer collector.Shutdown(context.Background())
+
+	parentCtx, parentSpan := otel.Tracer("test-http-framework").Start(context.Background(), "/graphql")
+	parentSpanID := parentSpan.SpanContext().SpanID()
+
+	tracer := gqlgen.New(gqlgen.Config{IncludeOperationInServerSpanName: true})
+	ctx := withOperationContext(operationContext(ast.Query, "GetUser", ""))
+	ctx = graphql.WithOperationContext(parentCtx, graphql.GetOperationContext(ctx))
+
+	next := func(context.Context) *graphql.Response {
+		return &graphql.Response{Data: []byte(`{}`)}
+	}
+	tracer.InterceptResponse(ctx, next)
+	parentSpan.End()
+
+	spans := collector.GetSpans()
+	require.Len(t, spans, 2)
+
+	var renamedParent sdktrace.ReadOnlySpan
+	for _, s := range spans {
+		if s.SpanContext().SpanID() == parentSpanID {
+			renamedParent = s
+			break
+		}
+	}
+	require.NotNil(t, renamedParent, "parent span should be captured")
+	assert.Equal(t, "query GetUser", renamedParent.Name())
+	testutil.AssertSpanAttribute(t, renamedParent, "graphql.operation.type", "query")
+	testutil.AssertSpanAttribute(t, renamedParent, "graphql.operation.name", "GetUser")
+	assert.Equal(t, trace.SpanKindInternal, spans[1].SpanKind(), "child span should remain INTERNAL")
 }
 
 // TestTracer_ZeroValue_ResolvesTracerFromGlobalProvider verifies a
