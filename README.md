@@ -310,7 +310,7 @@ gqlgenagent.Use(srv, gqlgenagent.Config{
 ```
 
 <p>
-If you want a New Relic-style experience where the HTTP request span itself is named after the GraphQL operation, set <code>Config.IncludeOperationInServerSpanName=true</code>. This renames the active parent span (typically your framework's HTTP SERVER span) to <code>query GetUser</code>/<code>mutation CreateUser</code> and also stamps <code>graphql.operation.*</code> attributes onto that parent span. This can increase span-name cardinality; prefer leaving it off unless you explicitly want operation-level naming at the request level.
+If you want the HTTP request span itself to be named after the GraphQL operation, set <code>Config.IncludeOperationInServerSpanName=true</code>. This renames the active parent span (typically your framework's HTTP SERVER span) to <code>query GetUser</code>/<code>mutation CreateUser</code> and also stamps <code>graphql.operation.*</code> attributes onto that parent span. This can increase span-name cardinality; prefer leaving it off unless you explicitly want operation-level naming at the request level.
 </p>
 
 ```go
