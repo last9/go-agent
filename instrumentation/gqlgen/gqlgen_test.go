@@ -302,7 +302,17 @@ func TestUse_EndToEnd(t *testing.T) {
 
 	srv := testserver.New()
 	srv.AddTransport(transport.POST{})
-	gqlgen.Use(srv.Server, gqlgen.Config{})
+	// NOTE: We intentionally do NOT call gqlgen.Use here.
+	//
+	// Use() auto-starts the agent (for real application convenience), which
+	// overwrites the global OTel tracer provider. That would break this test's
+	// mock collector which relies on the global tracer provider being set to an
+	// in-memory recorder.
+	//
+	// This test is purely about verifying span emission + naming through a real
+	// gqlgen server request path; Use() has separate tests for "does not panic"
+	// and "works before agent.Start".
+	srv.Server.Use(gqlgen.New(gqlgen.Config{}))
 	c := client.New(srv)
 
 	var resp struct {
@@ -325,7 +335,7 @@ func TestUse_EndToEnd_ErrorPath(t *testing.T) {
 
 	srv := testserver.New()
 	srv.AddTransport(transport.POST{})
-	gqlgen.Use(srv.Server, gqlgen.Config{})
+	srv.Server.Use(gqlgen.New(gqlgen.Config{}))
 	c := client.New(srv)
 
 	var resp struct {
