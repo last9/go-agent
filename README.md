@@ -19,6 +19,7 @@ This is the SDK path: works anywhere Go runs — VMs, bare metal, Lambda, local 
 - [Quick Start](#quick-start)
 - [Framework Support](#framework-support)
 - [Database Support](#database-support)
+- [GraphQL Support](#graphql-support)
 - [ORM Support (GORM)](#orm-support-gorm)
 - [MongoDB](#mongodb)
 - [Redis](#redis)
@@ -271,6 +272,55 @@ func (r *UserRepo) FindByID(ctx context.Context, id int) (*User, error) {
 
     // ... run query
 }
+```
+
+## GraphQL Support
+
+<p>
+The <code>gqlgen</code> package instruments <a href="https://github.com/99designs/gqlgen"><code>99designs/gqlgen</code></a> servers. Every GraphQL operation (query or mutation) gets one INTERNAL span, named after the operation (e.g. <code>query GetUser</code>) and carrying OTel semantic convention attributes (<code>graphql.operation.name</code>, <code>graphql.operation.type</code>). GraphQL-level errors — responses with a populated <code>errors</code> array, which gqlgen returns with HTTP 200 — mark the span as errored and set <code>graphql.error.count</code> and <code>error.type</code>. Field-level resolver spans and GraphQL subscriptions are not instrumented.
+</p>
+
+<p>
+Wire this alongside your HTTP framework instrumentation so the GraphQL span nests under the SERVER span for the <code>/graphql</code> request. The gqlgen extension does not replace HTTP middleware — it adds operation-level detail inside an already-traced request.
+</p>
+
+<p>
+If you configure the agent using <code>agent.Start(...)</code> functional options, call <code>agent.Start(...)</code> before <code>gqlgenagent.Use(...)</code>. <code>Use</code> will auto-start the agent (using env-defaults) if it’s not initialized yet, and subsequent <code>agent.Start(opts...)</code> calls won’t take effect.
+</p>
+
+```go
+import (
+    "github.com/go-chi/chi/v5"
+    "github.com/99designs/gqlgen/graphql/handler"
+    chiagent "github.com/last9/go-agent/instrumentation/chi"
+    gqlgenagent "github.com/last9/go-agent/instrumentation/gqlgen"
+)
+
+r := chi.NewRouter()
+srv := handler.NewDefaultServer(schema)
+gqlgenagent.Use(srv, gqlgenagent.Config{})
+r.Handle("/graphql", srv)
+http.ListenAndServe(":8080", chiagent.Use(r))
+```
+
+<p>
+<code>Config.IncludeQueryDocument</code> is opt-in and disabled by default. When <code>true</code>, it includes both the raw GraphQL query document text (<code>graphql.document</code>) <em>and</em> raw GraphQL error message text on the span — GraphQL resolver and validation errors routinely echo back the input that caused them (emails, IDs, other user-supplied values), so both are gated behind the same flag. Disable in production environments that handle PII or sensitive data. <code>graphql.operation.name</code>/<code>type</code> and the always-on <code>graphql.error.count</code>/<code>error.type</code> attributes are unaffected by this flag — they carry no query content.
+</p>
+
+```go
+gqlgenagent.Use(srv, gqlgenagent.Config{
+    IncludeQueryDocument: true, // include raw query text and error messages — non-production only
+})
+```
+
+<p>
+If you want the HTTP request span itself to be named after the GraphQL operation, set <code>Config.IncludeOperationInServerSpanName=true</code>. This renames the active parent span (typically your framework's HTTP SERVER span) to <code>query GetUser</code>/<code>mutation CreateUser</code> and also stamps <code>graphql.operation.*</code> attributes onto that parent span. This can increase span-name cardinality; prefer leaving it off unless you explicitly want operation-level naming at the request level.
+</p>
+
+```go
+gqlgenagent.Use(srv, gqlgenagent.Config{
+    IncludeOperationInServerSpanName: true, // rename parent HTTP span to the GraphQL operation name
+})
 ```
 
 ## ORM Support (GORM)

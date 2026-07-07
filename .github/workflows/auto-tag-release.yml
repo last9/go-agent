@@ -1,0 +1,63 @@
+name: Auto-tag release
+
+on:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Tag release from CHANGELOG
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Only tag when this push updated CHANGELOG.md.
+          if ! git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | grep -q '^CHANGELOG\.md$'; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          # First released version heading (skip Unreleased).
+          version="$(
+            perl -ne 'if(/^## \\[(\\d+\\.\\d+\\.\\d+)\\]/){print $1; exit}' CHANGELOG.md
+          )"
+
+          if [[ -z "${version}" ]]; then
+            echo "No version found in CHANGELOG.md" >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: steps.version.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          tag="v${version}"
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "Tag ${tag} already exists; skipping."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "${tag}" -m "Release ${tag}"
+          git push origin "${tag}"
+
