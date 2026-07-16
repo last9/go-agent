@@ -20,6 +20,7 @@ This is the SDK path: works anywhere Go runs — VMs, bare metal, Lambda, local 
 - [Framework Support](#framework-support)
 - [Database Support](#database-support)
 - [GraphQL Support](#graphql-support)
+- [Custom Business Spans](#custom-business-spans)
 - [ORM Support (GORM)](#orm-support-gorm)
 - [MongoDB](#mongodb)
 - [Redis](#redis)
@@ -322,6 +323,54 @@ gqlgenagent.Use(srv, gqlgenagent.Config{
     IncludeOperationInServerSpanName: true, // rename parent HTTP span to the GraphQL operation name
 })
 ```
+
+## Custom Business Spans
+
+Framework and datastore instrumentation create spans at transport and I/O
+boundaries. To make domain-layer work visible between those boundaries, wrap
+business methods with the tracing helpers from the root package. The context
+received by the callback must be passed to downstream calls so their spans nest
+under the business span.
+
+```go
+import (
+    "context"
+
+    agent "github.com/last9/go-agent"
+)
+
+type tracedLeaderboardStore struct {
+    next LeaderboardStore
+}
+
+func (s *tracedLeaderboardStore) GetLeaderboard(
+    ctx context.Context,
+    leagueID string,
+) (*Leaderboard, error) {
+    return agent.TraceFunctionWithResult(
+        ctx,
+        "LeaderboardStore.GetLeaderboard",
+        func(ctx context.Context) (*Leaderboard, error) {
+            return s.next.GetLeaderboard(ctx, leagueID)
+        },
+    )
+}
+```
+
+`TraceFunction` covers methods that return only an error, while
+`TraceFunctionWithResult` covers a result plus an error. Both create INTERNAL
+spans, end them automatically, and record returned errors. For methods with
+other signatures or spans that need custom attributes, use `StartSpan` and end
+the returned span explicitly:
+
+```go
+ctx, span := agent.StartSpan(ctx, "LeaderboardStore.GetLeaderboard")
+defer span.End()
+```
+
+For large interface surfaces, generated decorators can apply these helpers at
+the interface boundary. The agent does not generate decorators or instrument
+arbitrary function calls automatically.
 
 ## ORM Support (GORM)
 

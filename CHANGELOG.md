@@ -56,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Route exclusion** — `LAST9_EXCLUDED_PATHS`, `LAST9_EXCLUDED_PATH_PREFIXES`, and `LAST9_EXCLUDED_PATH_PATTERNS` environment variables to filter health-check and infrastructure endpoints from tracing. Works across all supported frameworks.
 - **`LAST9_TRACE_SAMPLE_RATE`** — environment variable for probabilistic sampling without a custom `OTEL_TRACES_SAMPLER` config.
 - **Functional options** — programmatic configuration via `agent.WithEndpoint()`, `agent.WithHeaders()`, and related option functions as an alternative to environment variables.
-- **Context helpers** — `agent.ContextWithSpan`, `agent.SpanFromContext`, and related utilities for manual span management.
+- **Context and tracing helpers** — `agent.GetTraceID`, `agent.GetSpanID`, and `agent.IsTracing` for trace-context inspection; `agent.StartSpan`, `agent.TraceFunction`, and `agent.TraceFunctionWithResult` for manual span creation.
 - **EC2 resource detection** — automatic detection of EC2 instance metadata via IMDSv2.
 - **AWS SDK v2 instrumentation** — automatic tracing of AWS SDK v2 calls.
 
